@@ -2,8 +2,6 @@ import cplex
 from cplex import Cplex
 from cplex.exceptions import CplexError
 from FindPaths import sorted_paths
-from calculate_wcd import calculate_wcd
-from docplex.mp.model import Model
 import networkx as nx
 import matplotlib.pyplot as plt
 
@@ -16,9 +14,6 @@ service_types = {
     5: {"name": "VPP", "bandwidth": 2, "latency": 800, "processor_cores": 4, "Memory_GB": 8, "Storage_GB": 4}
 }
 
-# Define global P
-P = {}
-
 def define_scheduling_algorithm():
     scheduling_algorithms_types = {
         1: "Strictly Rate-Proportional (SRP) latency",
@@ -30,6 +25,14 @@ def define_scheduling_algorithm():
         print(i + 1, scheduling_algorithms_types[i + 1])
     scheduling_algorithm = input(f"Enter number of the used node scheduling_algorithm for WCD calculation : ")
     return scheduling_algorithm
+# Define global P
+P = {}
+scheduling_algorithm = define_scheduling_algorithm()
+resource_graph, paths = sorted_paths()  # WCD = 0 for all available pathes ===> {'f1': ([0, 1, 3], {'wcd': 0}), ([0, 2, 3], {'wcd': 0}), ([0, 3], {'wcd': 0})}
+# scheduling_algorithm = next((resource_graph.nodes[node]['scheduling_algorithm'] for node in resource_graph.nodes if resource_graph.nodes[node]['type'] == 'N'), 1)
+# field_devices = [node for node in resource_graph.nodes if resource_graph.nodes[node]['type'] == 'F']#field_devices[name] = {'type': 'F', 'position': position, 'service_type': selected_service}
+field_devices = {node: resource_graph.nodes[node] for node in resource_graph.nodes if resource_graph.nodes[node]['type'] == 'F'}
+field_devices_delta = {}  # the latency deadline accepted to realize the QoS requirements for the related flow
 
 
 for device, attributes in field_devices.items():
@@ -46,7 +49,6 @@ for device, attributes in field_devices.items():
     # Extracting δ (latency) from the service_types dictionary using the key
     delta = service_types[service_type_key]['latency']
     field_devices_delta[device] = delta#The path should achieve an end-to-end deadline (δ), where the worst-case end-to-end delay (WCD) does not exceed δ.
-
 
 def flow_number(i, j, field_devices, flow):
     if i not in P:
@@ -515,13 +517,6 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
         print(f"Cplex error: {e}")
         return None
 
-if __name__ == "__main__":
-
- scheduling_algorithm = define_scheduling_algorithm()
- resource_graph, paths = sorted_paths()  # WCD = 0 for all available pathes ===> {'f1': ([0, 1, 3], {'wcd': 0}), ([0, 2, 3], {'wcd': 0}), ([0, 3], {'wcd': 0})}
- # scheduling_algorithm = next((resource_graph.nodes[node]['scheduling_algorithm'] for node in resource_graph.nodes if resource_graph.nodes[node]['type'] == 'N'), 1)
- # field_devices = [node for node in resource_graph.nodes if resource_graph.nodes[node]['type'] == 'F']#field_devices[name] = {'type': 'F', 'position': position, 'service_type': selected_service}
- field_devices = {node: resource_graph.nodes[node] for node in resource_graph.nodes if resource_graph.nodes[node]['type'] == 'F'}
- field_devices_delta = {}  # the latency deadline accepted to realize the QoS requirements for the related flow
- result = solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_algorithm, 1500, 1500)
- print(result)
+#if __name__ == "__main__":
+result = solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_algorithm, 1500, 1500)
+print(result)
