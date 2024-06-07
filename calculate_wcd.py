@@ -16,9 +16,9 @@ service_types = {
     5: {"name": "VPP", "bandwidth": 2, "latency": 800, "processor_cores": 4, "Memory_GB": 8, "Storage_GB": 4}
 }
 
-resource_graph, paths = sorted_paths()# WCD = 0 for all available pathes ===> {'f1': ([0, 1, 3], {'wcd': 0}), ([0, 2, 3], {'wcd': 0}), ([0, 3], {'wcd': 0})}
 # Define global P
 P = {}
+
 def define_scheduling_algorithm():
     scheduling_algorithms_types = {
         1: "Strictly Rate-Proportional (SRP) latency",
@@ -31,11 +31,7 @@ def define_scheduling_algorithm():
     scheduling_algorithm = input(f"Enter number of the used node scheduling_algorithm for WCD calculation : ")
     return scheduling_algorithm
 
-scheduling_algorithm = define_scheduling_algorithm()
-#scheduling_algorithm = next((resource_graph.nodes[node]['scheduling_algorithm'] for node in resource_graph.nodes if resource_graph.nodes[node]['type'] == 'N'), 1)
-#field_devices = [node for node in resource_graph.nodes if resource_graph.nodes[node]['type'] == 'F']#field_devices[name] = {'type': 'F', 'position': position, 'service_type': selected_service}
-field_devices = {node: resource_graph.nodes[node] for node in resource_graph.nodes if resource_graph.nodes[node]['type'] == 'F'}
-field_devices_delta = {}# the latency deadline accepted to realize the QoS requirements for the related flow
+
 for device, attributes in field_devices.items():
     # Extracting service_type attribute value from the device
     service_type = attributes['service_type']
@@ -283,6 +279,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
         # Scheduling algorithm constraints (point 7)
         if scheduling_algorithm == 1:  # Strictly Rate-Proportional (SRP) scheduling algorithm
             for device in field_devices:
+                H = 0
                 for path in flow[device]['paths']:
                     path_nodes = path[0]  # List of nodes in the path
                     path_min_rate = [all_min_rate[path_nodes[i]][path_nodes[i + 1]] for i in range(len(path_nodes) - 1)]
@@ -323,14 +320,15 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                     prob.linear_constraints.add(
                         lin_expr=[[[wcd], [1]]],
                         senses=['G'],
-                        rhs=[flow[device]['deadline']]
-                    )
-                    path[1]['wcd'] = wcd  # Save the calculated WCD value
+                        rhs=[flow[device]['deadline']] )
+                    H = H + 1
+                    flow[device]['paths'][H][1]['wcd'] = wcd  # Save the calculated WCD value
 
 
 
         elif scheduling_algorithm == 2:  # Group-Based (GB) scheduling algorithm
             for device in field_devices:
+                H = 0
                 for path in flow[device]['paths']:
                     path_nodes = path[0]  # List of nodes in the path
                     path_min_rate = [all_min_rate[path_nodes[i]][path_nodes[i + 1]] for i in range(len(path_nodes) - 1)]
@@ -364,12 +362,13 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                     prob.linear_constraints.add(
                         lin_expr=[[[wcd], [1]]],
                         senses=['G'],
-                        rhs=[flow[device]['deadline']]
-                    )
-                    path[1]['wcd']= wcd
+                        rhs=[flow[device]['deadline']])
+                    H = H + 1
+                    flow[device]['paths'][H][1]['wcd']= wcd
 
         elif scheduling_algorithm == 3:  # Weakly Rate-Proportional (WRP) algorithm
             for device in field_devices:
+                H = 0
                 for path in flow[device]['paths']:
                     path_nodes = path[0]  # List of nodes in the path
                     path_min_rate = [all_min_rate[path_nodes[i]][path_nodes[i + 1]] for i in range(len(path_nodes) - 1)]
@@ -413,12 +412,13 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                     prob.linear_constraints.add(
                         lin_expr=[[[constraint_sum], [1]]],
                         senses=['L'],
-                        rhs=[delay_slack]
-                    )
-                    path[1]['wcd']= wcd
+                        rhs=[delay_slack])
+                    H = H + 1
+                    flow[device]['paths'][H][1]['wcd']= wcd
 
         elif scheduling_algorithm == 4:  # Frame-Based (FB) scheduler algorithm
             for device in field_devices:
+                H = 0
                 for path in flow[device]['paths']:
                     path_nodes = path[0]  # List of nodes in the path
                     path_min_rate = [all_min_rate[path_nodes[i]][path_nodes[i + 1]] for i in range(len(path_nodes) - 1)]
@@ -491,9 +491,9 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                     prob.linear_constraints.add(
                         lin_expr=[[[constraint_sum], [1]]],
                         senses=['L'],
-                        rhs=[delay_slack]
-                    )
-                    path[1]['wcd'] = wcd  # Dictionary with 'wcd' value
+                        rhs=[delay_slack])
+                    H = H + 1
+                    flow[device]['paths'][H][1]['wcd'] = wcd  # Dictionary with 'wcd' value
 
         # Objective function: min ∑((i,j)∈A)〖f_ij * r_ij〗
         objective = []
@@ -515,10 +515,13 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
         print(f"Cplex error: {e}")
         return None
 
+if __name__ == "__main__":
 
-# Example usage:
-resource_graph = [[0, 1, 2], [1, 0, 3], [2, 3, 0]]  # Replace with your actual resource graph
-paths = [...]
-scheduling_algorithm = 1  # Replace with the actual scheduling algorithm value
-result = solve_optimal_path(resource_graph, paths, scheduling_algorithm)
-print(result)
+ scheduling_algorithm = define_scheduling_algorithm()
+ resource_graph, paths = sorted_paths()  # WCD = 0 for all available pathes ===> {'f1': ([0, 1, 3], {'wcd': 0}), ([0, 2, 3], {'wcd': 0}), ([0, 3], {'wcd': 0})}
+ # scheduling_algorithm = next((resource_graph.nodes[node]['scheduling_algorithm'] for node in resource_graph.nodes if resource_graph.nodes[node]['type'] == 'N'), 1)
+ # field_devices = [node for node in resource_graph.nodes if resource_graph.nodes[node]['type'] == 'F']#field_devices[name] = {'type': 'F', 'position': position, 'service_type': selected_service}
+ field_devices = {node: resource_graph.nodes[node] for node in resource_graph.nodes if resource_graph.nodes[node]['type'] == 'F'}
+ field_devices_delta = {}  # the latency deadline accepted to realize the QoS requirements for the related flow
+ result = solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_algorithm, 1500, 1500)
+ print(result)
