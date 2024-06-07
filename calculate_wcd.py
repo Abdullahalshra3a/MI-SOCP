@@ -4,6 +4,7 @@ from cplex.exceptions import CplexError
 from FindPaths import sorted_paths
 import networkx as nx
 import matplotlib.pyplot as plt
+from itertools import product
 
 
 service_types = {
