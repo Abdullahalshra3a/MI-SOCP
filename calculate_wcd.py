@@ -500,12 +500,46 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
         # Objective function: min ∑((i,j)∈A)〖f_ij * r_ij〗
         objective = []
         for i, j in resource_graph.edges:
-            f_ij = calculate_cost(resource_graph, i, j,sum([flow[device]['reserved_rates'] for device in field_devices if any(Check_edge_inpath(path[0], i, j) for path in flow[device]['paths'])]))
-            r_ij_var = 'r_{}_{}'.format(i, j)
-            objective.append((f_ij, r_ij_var))
+            total_cost = 0
+
+            # Iterate through each field device
+            for primary_device in field_devices:
+                primary_device_paths = flow[primary_device]['paths']
+
+                # Consider each path of the primary device
+                for primary_path in primary_device_paths:
+                    total_reserved_rates = 0
+
+                    # Initialize reserved rates with the primary device's path if it uses edge (i, j)
+                    if Check_edge_inpath(primary_path[0], i, j):
+                        total_reserved_rates += flow[primary_device]['reserved_rates']
+
+                    # For all other devices, consider all combinations of their paths
+                    other_devices = [device for device in field_devices if device != primary_device]
+                    all_combinations = list(product(*[flow[device]['paths'] for device in other_devices]))
+
+                    for combination in all_combinations:
+                        combination_reserved_rates = total_reserved_rates
+
+                        # Add reserved rates from the paths of other devices in the combination
+                        for other_path in combination:
+                            other_device = next( device for device in other_devices if flow[device]['paths'].count(other_path))
+                            #if Check_edge_inpath(other_path[0], i, j):
+                            combination_reserved_rates += flow[other_device]['reserved_rates']
+
+                        # Calculate the cost for the current combination
+                        # Only consider the reservation value if it's less than or equal to the bandwidth
+                        if combination_reserved_rates <=  resource_graph[i][j]['bandwidth']:
+                            f_ij = combination_reserved_rates
+                            r_ij_var = 'r_{}_{}'.format(i, j)
+                            objective.append((f_ij, r_ij_var))
+                        else:
+                            return float(
+                                'inf: Arbitrarily high cost if the reservation exceeds bandwidth')  # Arbitrarily high cost if the reservation exceeds bandwidth
 
         prob.objective.set_linear(objective)
         prob.objective.set_sense(prob.objective.sense.minimize)
+
 
         # Solve the problem
         prob.solve()
