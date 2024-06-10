@@ -25,11 +25,11 @@ def create_field_devices():
         {"name": "F26", "position": "23.0,10.0", "service_choice": 1},
         {"name": "F25", "position": "28.0,10.0", "service_choice": 2},
         {"name": "F24", "position": "30.0,12.0", "service_choice": 4},
-        {"name": "F23", "position": "30.0,10.0", "service_choice": 4},
+        {"name": "F23", "position": "30.0,16.0", "service_choice": 4},
         {"name": "F22", "position": "28.0,18.0", "service_choice": 3},
         {"name": "F21", "position": "30.0,20.0", "service_choice": 5},
         {"name": "F16", "position": "18.0,14.0", "service_choice": 2},
-        {"name": "F15", "position": "15.0,16.0", "service_choice": 2},
+        {"name": "F15", "position": "15.0,17.0", "service_choice": 2},
     ]
 
     # Parse the input data
@@ -62,7 +62,7 @@ def create_servers():
         },
         {
             "name": "S2",
-            "position": "23.0,28.0",
+            "position": "23.0,18.0",
             "cpu": 4.0,
             "memory": 8.0,
             "storage": 200.0,
@@ -153,11 +153,6 @@ def create_forwarding_nodes():
             "algorithm_choice": 1
         },
         {
-            "name": "R33",
-            "position": "26.0,12.0",
-            "algorithm_choice": 1
-        },
-        {
             "name": "R22",
             "position": "26.0,16.0",
             "algorithm_choice": 1
@@ -167,6 +162,11 @@ def create_forwarding_nodes():
             "position": "28.0,14.0",
             "algorithm_choice": 1
         },
+        {
+            "name": "R23",
+            "position": "26.0,12.0",
+            "algorithm_choice": 1
+        }
     ]
 
     # Parse the input data
@@ -299,11 +299,7 @@ def connect_vertices(graph):
             "target": "F34",
             "link_type": 1
         },
-        {
-            "source": "R31",
-            "target": "RF35",
-            "link_type": 1
-        },
+
         {
             "source": "R20",
             "target": "R21",
@@ -321,7 +317,7 @@ def connect_vertices(graph):
         },
         {
             "source": "R23",
-            "target": "F36",
+            "target": "F26",
             "link_type": 1
         },
         {
@@ -330,13 +326,13 @@ def connect_vertices(graph):
             "link_type": 2
         },
         {
-            "source": "R21",
-            "target": "R22",
+            "source": "F23",
+            "target": "R24",
             "link_type": 2
         },
         {
-            "source": "R32",
-            "target": "R31",
+            "source": "R21",
+            "target": "R22",
             "link_type": 2
         },
         {
@@ -358,11 +354,6 @@ def connect_vertices(graph):
             "source": "R22",
             "target": "F21",
             "link_type": 1
-        },
-        {
-            "source": "R32",
-            "target": "R31",
-            "link_type": 2
         },
         {
             "source": "R31",
@@ -393,11 +384,7 @@ def connect_vertices(graph):
             "target": "F21",
             "link_type": 1
         },
-        {
-            "source": "R24",
-            "target": "F21",
-            "link_type": 1
-        },
+
         {
             "source": "R24",
             "target": "F24",
@@ -451,16 +438,16 @@ def display_graph(graph):
     for node in graph.nodes():
         if 'type' in graph.nodes[node]:
             if graph.nodes[node]['type'] == 'F':
-                node_colors.append('blue')
+                node_colors.append('skyblue')
             elif graph.nodes[node]['type'] == 'S':
                 node_colors.append('red')
             else:
-                node_colors.append('skyblue')
+                node_colors.append('green')
         else:
             node_colors.append('gray')  # Default color for nodes without 'type' attribute
 
     nx.draw(graph, pos, with_labels=True, font_weight='bold', node_size=500, node_color=node_colors)
-    edge_labels = nx.get_edge_attributes(graph, 'link_description')
+    edge_labels = nx.get_edge_attributes(graph,'x,y')
     nx.draw_networkx_edge_labels(graph, pos, edge_labels=edge_labels)
     ax.tick_params(left=True, bottom=True, labelleft=True, labelbottom=True)
     plt.title('Generated Graph')
