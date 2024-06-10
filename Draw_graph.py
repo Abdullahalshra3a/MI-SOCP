@@ -1,18 +1,16 @@
 import networkx as nx
 import matplotlib.pyplot as plt
 import pickle
-import json
 
 service_types = {
-        1: {"name": "AR", "bandwidth": 2.5, "latency": 100, "processor_cores": 1, "Memory_GB": 2, "Storage_GB": 4},
-        2: {"name": "CVC", "bandwidth": 3, "latency": 500, "processor_cores": 1, "Memory_GB": 2, "Storage_GB": 4},
-        3: {"name": "LM", "bandwidth": 1, "latency": 1000, "processor_cores": 0.5, "Memory_GB": 0.2, "Storage_GB": 2.5},
-        4: {"name": "SE", "bandwidth": 0.5, "latency": 1000, "processor_cores": 1, "Memory_GB": 2, "Storage_GB": 0.5},
-        5: {"name": "VPP", "bandwidth": 2, "latency": 800, "processor_cores": 4, "Memory_GB": 8, "Storage_GB": 4}
-    }
+    1: {"name": "AR", "bandwidth": 2.5, "latency": 100, "processor_cores": 1, "Memory_GB": 2, "Storage_GB": 4},
+    2: {"name": "CVC", "bandwidth": 3, "latency": 500, "processor_cores": 1, "Memory_GB": 2, "Storage_GB": 4},
+    3: {"name": "LM", "bandwidth": 1, "latency": 1000, "processor_cores": 0.5, "Memory_GB": 0.2, "Storage_GB": 2.5},
+    4: {"name": "SE", "bandwidth": 0.5, "latency": 1000, "processor_cores": 1, "Memory_GB": 2, "Storage_GB": 0.5},
+    5: {"name": "VPP", "bandwidth": 2, "latency": 800, "processor_cores": 4, "Memory_GB": 8, "Storage_GB": 4}
+}
 
-def create_field_devices():# num is the number of field devices in our network.
-
+def create_field_devices():
     # Sample input format in JSON
     input_data = [
         {"name": "F11", "position": "4.0,18.0", "service_choice": 4},
@@ -34,7 +32,6 @@ def create_field_devices():# num is the number of field devices in our network.
         {"name": "F15", "position": "15.0,16.0", "service_choice": 2},
     ]
 
-
     # Parse the input data
     devices_info = input_data
 
@@ -55,24 +52,23 @@ def create_field_devices():# num is the number of field devices in our network.
 def create_servers():
     # Sample input format in JSON
     input_data = [
-          {
-              "name": "S1",
-              "position": "8.0,20.0",
-              "cpu": 6.0,
-              "memory": 16.0,
-              "storage": 50.0,
-              "service_choices": [2, 4, 5]
-          },
-          {
-              "name": "S2",
-              "position": "23.0,28.0",
-              "cpu": 4.0,
-              "memory": 8.0,
-              "storage": 200.0,
-              "service_choices": [1, 3]
-          }
-      ]
-
+        {
+            "name": "S1",
+            "position": "8.0,20.0",
+            "cpu": 6.0,
+            "memory": 16.0,
+            "storage": 50.0,
+            "service_choices": [2, 4, 5]
+        },
+        {
+            "name": "S2",
+            "position": "23.0,28.0",
+            "cpu": 4.0,
+            "memory": 8.0,
+            "storage": 200.0,
+            "service_choices": [1, 3]
+        }
+    ]
 
     # Parse the input data
     servers_info = input_data
@@ -98,10 +94,10 @@ def create_servers():
         }
 
     print(servers)
+
     return servers
 
 def create_forwarding_nodes():
-
     scheduling_algorithms = {
         1: "Strictly Rate-Proportional (SRP) latency",
         2: "Group-Based (GB) approximations of WFQ",
@@ -119,8 +115,9 @@ def create_forwarding_nodes():
         {
             "name": "R13",
             "position": "8.0,12.0",
-            "algorithm_choice": 1},
-            {
+            "algorithm_choice": 1
+        },
+        {
             "name": "R11",
             "position": "12.0,14.0",
             "algorithm_choice": 1
@@ -128,8 +125,9 @@ def create_forwarding_nodes():
         {
             "name": "R10",
             "position": "15.0,12.0",
-            "algorithm_choice": 1},
-            {
+            "algorithm_choice": 1
+        },
+        {
             "name": "R32",
             "position": "15.0,6.0",
             "algorithm_choice": 1
@@ -137,8 +135,9 @@ def create_forwarding_nodes():
         {
             "name": "R30",
             "position": "18.0,8.0",
-            "algorithm_choice": 1},
-            {
+            "algorithm_choice": 1
+        },
+        {
             "name": "R20",
             "position": "20.0,12.0",
             "algorithm_choice": 1
@@ -146,8 +145,9 @@ def create_forwarding_nodes():
         {
             "name": "R31",
             "position": "20.0,6.0",
-            "algorithm_choice": 1},
-            {
+            "algorithm_choice": 1
+        },
+        {
             "name": "R21",
             "position": "23.0,14.0",
             "algorithm_choice": 1
@@ -155,8 +155,9 @@ def create_forwarding_nodes():
         {
             "name": "R33",
             "position": "26.0,12.0",
-            "algorithm_choice": 1},
-            {
+            "algorithm_choice": 1
+        },
+        {
             "name": "R22",
             "position": "26.0,16.0",
             "algorithm_choice": 1
@@ -164,9 +165,9 @@ def create_forwarding_nodes():
         {
             "name": "R24",
             "position": "28.0,14.0",
-            "algorithm_choice": 1},
+            "algorithm_choice": 1
+        },
     ]
-
 
     # Parse the input data
     nodes_info = input_data
@@ -190,6 +191,11 @@ def create_forwarding_nodes():
 
 
 def connect_vertices(graph):
+    link_types = {
+        1: "edge link with bandwidth = 20 and latency = 30",
+        2: "network link with bandwidth = 100 and latency = 25",
+        3: "core link with bandwidth = 200 and latency = 20"
+    }
     input_data = [
         {
             "source": "F11",
@@ -403,10 +409,6 @@ def connect_vertices(graph):
             "link_type": 2
         },
     ]
-    link_types = {  1: "edge link with bandwidth = 20 and latency = 30",
-        2: "network link with bandwidth = 100 and latency = 25",
-        3: "core link with bandwidth = 200 and latency = 20"
-    }
 
     # Parse the input data
     connections = input_data
@@ -440,24 +442,29 @@ def save_graph(graph):
 
 
 def display_graph(graph):
-    #plt.figure(figsize=(10, 6))
     fig, ax = plt.subplots()
     pos = nx.spring_layout(graph)
-    color_map = []
-    for i in graph.nodes:
-        if graph.nodes[i]['type']== 'F':
-            color_map.append('blue')
-        elif graph.nodes[i]['type']== 'S':
-            color_map.append('red')
+    print("Number of positions:", len(pos))
+    print("Nodes in the graph:", graph.nodes())
+
+    node_colors = []
+    for node in graph.nodes():
+        if 'type' in graph.nodes[node]:
+            if graph.nodes[node]['type'] == 'F':
+                node_colors.append('blue')
+            elif graph.nodes[node]['type'] == 'S':
+                node_colors.append('red')
+            else:
+                node_colors.append('skyblue')
         else:
-            color_map.append('skyblue')
-    nx.draw(graph, pos, with_labels=True, font_weight='bold', node_size=500, node_color=color_map)
+            node_colors.append('gray')  # Default color for nodes without 'type' attribute
+
+    nx.draw(graph, pos, with_labels=True, font_weight='bold', node_size=500, node_color=node_colors)
     edge_labels = nx.get_edge_attributes(graph, 'link_description')
     nx.draw_networkx_edge_labels(graph, pos, edge_labels=edge_labels)
     ax.tick_params(left=True, bottom=True, labelleft=True, labelbottom=True)
     plt.title('Generated Graph')
     plt.show()
-
 
 def upload_graph():
     file_name = input("Enter the filename to upload the graph (without extension): ")
@@ -474,34 +481,30 @@ def upload_graph():
 
 def BuildGraph():
     graph = nx.Graph()
+    scheduling_algorithms_info = {
+        1: "Strictly Rate-Proportional (SRP) scheduling algorithm assigns priorities to packets based on their rates.",
+        2: "Group-Based (GB) scheduling approximates Weighted Fair Queuing (WFQ) using groups for packet scheduling.",
+        3: "Schedulers with Weakly Rate-Proportional (WRP) latency assign priorities based on weak rate proportionality.",
+        4: "Frame-Based (FB) schedulers use frame-based scheduling to manage latency."
+    }
 
-
-    #print("Select a scheduling algorithm for forwarding nodes:")
-    #for key, value in scheduling_algorithms_info.items():
-    #    print(f"{key} - {value}")
-
-    #scheduling_algorithm = 1 #int(input("Enter the scheduling algorithm (1/2/3/4): "))
-
-    #num_field_devices = int(input("Enter number of Field Devices: "))
     field_devices = create_field_devices()
-
-    #num_servers = int(input("Enter number of Servers: "))
     servers = create_servers()
-
-    #num_forwarding_nodes = int(input("Enter number of Forwarding Nodes: "))
     forwarding_nodes = create_forwarding_nodes()
 
-    # Add nodes to the graph
-    graph.add_nodes_from([(name, data) for name, data in field_devices.items()])
-    for name, data in field_devices.items(): graph.nodes[name]['pos'] = data['position']
-    graph.add_nodes_from([(name, data) for name, data in servers.items()])
-    for name, data in servers.items(): graph.nodes[name]['pos'] = data['position']
-    graph.add_nodes_from([(name, data) for name, data in forwarding_nodes.items()])
-    for name, data in forwarding_nodes.items(): graph.nodes[name]['pos'] = data['position']
+    # Add nodes to the graph with attributes
+    for name, data in field_devices.items():
+        graph.add_node(name, **data)
+
+    for name, data in servers.items():
+        graph.add_node(name, **data)
+
+    for name, data in forwarding_nodes.items():
+        graph.add_node(name, **data)
+
     connect_vertices(graph)
     display_graph(graph)
     save_graph(graph)
-    # print(nx.get_node_attributes(graph, 'pos'))
 
 
 
