@@ -1,6 +1,8 @@
 import networkx as nx
 import matplotlib.pyplot as plt
 import pickle
+import json
+
 service_types = {
         1: {"name": "AR", "bandwidth": 2.5, "latency": 100, "processor_cores": 1, "Memory_GB": 2, "Storage_GB": 4},
         2: {"name": "CVC", "bandwidth": 3, "latency": 500, "processor_cores": 1, "Memory_GB": 2, "Storage_GB": 4},
@@ -9,94 +11,422 @@ service_types = {
         5: {"name": "VPP", "bandwidth": 2, "latency": 800, "processor_cores": 4, "Memory_GB": 8, "Storage_GB": 4}
     }
 
-def create_field_devices(num, service_types):# num is the number of field devices in our network.
+def create_field_devices():# num is the number of field devices in our network.
+
+    # Sample input format in JSON
+    input_data = [
+        {"name": "F11", "position": "4.0,18.0", "service_choice": 4},
+        {"name": "F12", "position": "4.0,14.0", "service_choice": 3},
+        {"name": "F13", "position": "4.0,10.0", "service_choice": 5},
+        {"name": "F14", "position": "6.0,8.0", "service_choice": 5},
+        {"name": "F31", "position": "10.0,8.0", "service_choice": 4},
+        {"name": "F32", "position": "10.0,4.0", "service_choice": 2},
+        {"name": "F35", "position": "23.0,4.0", "service_choice": 5},
+        {"name": "F34", "position": "26.0,6.0", "service_choice": 3},
+        {"name": "F33", "position": "23.0,8.0", "service_choice": 4},
+        {"name": "F26", "position": "23.0,10.0", "service_choice": 1},
+        {"name": "F25", "position": "28.0,10.0", "service_choice": 2},
+        {"name": "F24", "position": "30.0,12.0", "service_choice": 4},
+        {"name": "F23", "position": "30.0,10.0", "service_choice": 4},
+        {"name": "F22", "position": "28.0,18.0", "service_choice": 3},
+        {"name": "F21", "position": "30.0,20.0", "service_choice": 5},
+        {"name": "F16", "position": "18.0,14.0", "service_choice": 2},
+        {"name": "F15", "position": "15.0,16.0", "service_choice": 2},
+    ]
+
+
+    # Parse the input data
+    devices_info = input_data
 
     field_devices = {}
-    for i in range(num):
-        name = input(f"Enter name for Field Device {i + 1}: ").upper()
-        position = tuple(map(float, input(f"Enter position (x, y) for {name}: ").split(',')))
 
-        print("Select a service type offered by this Field Device:")
-        for key, value in service_types.items():
-            print(f"{key} - {value}")
-
-        service_choice = int(input("Enter the service type (1/2/3/4/5): "))
+    for device in devices_info:
+        name = device['name'].upper()
+        position = tuple(map(float, device['position'].split(',')))
+        service_choice = device['service_choice']
         selected_service = service_types[service_choice]["name"]
+        field_devices[name] = {'type': 'F', 'position': position, 'service_type': selected_service}
 
-        #selected_service = service_types.get(service_choice)
-
-        field_devices[name] = {'type': 'F', 'position': position, 'service_type': selected_service}# We might add more info regarding the flow such as packet size.
-        # field_devices = {'F1': {'type': 'F', 'position': (1.0, 1.0), 'service_type': 'CVC'}, 'F2': {'type': 'F', 'position': (2.0, 2.0), 'service_type': 'LM'}}
+    print(field_devices)
 
     return field_devices
 
 
-def create_servers(num, service_types):
+def create_servers():
+    # Sample input format in JSON
+    input_data = [
+          {
+              "name": "S1",
+              "position": "8.0,20.0",
+              "cpu": 6.0,
+              "memory": 16.0,
+              "storage": 50.0,
+              "service_choices": [2, 4, 5]
+          },
+          {
+              "name": "S2",
+              "position": "23.0,28.0",
+              "cpu": 4.0,
+              "memory": 8.0,
+              "storage": 200.0,
+              "service_choices": [1, 3]
+          }
+      ]
+
+
+    # Parse the input data
+    servers_info = input_data
 
     servers = {}
-    for i in range(num):
-        name = input(f"Enter name for Server {i + 1}: ").upper()
-        position = tuple(map(float, input(f"Enter position (x, y) for {name}: ").split(',')))
-        cpu = float(input(f"Enter CPU for {name}: "))
-        memory = float(input(f"Enter Memory for {name}: "))
-        storage = float(input(f"Enter Storage for {name}: "))
-        print(f"Select service types processed by {name} (Enter one or multiple numbers, e.g., 1 3 5):")
-        for key, value in service_types.items():
-            print(key, '     ', value["name"])
 
-        selected_services = input("Enter the service types separated by space: ").split()
-        services_processed = [service_types[s]["name"] for s in selected_services]#service_types[int(s)]["name"] = [1,3,5]
-        servers[name] = {'type': 'S', 'position': position, 'services_processed': services_processed, 'CPU': cpu, 'Memory': memory, 'Storage': storage}# services_processed = {'name': 'SE', 'bandwidth': 0.5, 'latency': 1000, 'processor_cores': 1, 'Memory_GB': 2, 'Storage_GB': 0.5}
+    for server in servers_info:
+        name = server['name'].upper()
+        position = tuple(map(float, server['position'].split(',')))
+        cpu = server['cpu']
+        memory = server['memory']
+        storage = server['storage']
+        service_choices = server['service_choices']
+        services_processed = [service_types[choice]["name"] for choice in service_choices]
+
+        servers[name] = {
+            'type': 'S',
+            'position': position,
+            'services_processed': services_processed,
+            'CPU': cpu,
+            'Memory': memory,
+            'Storage': storage
+        }
+
+    print(servers)
     return servers
-"""
-if 'S1' in servers:
-    if len(servers['S1']['services_processed']) > 0:
-        bandwidth_of_first_service = servers['S1']['services_processed'][0]['bandwidth']
-        print(f"Bandwidth of the first service for server 'S1': {bandwidth_of_first_service}")
-    else:
-        print("No services selected for server 'S1'")
-else:
-    print("Server 'S1' not found")
-"""
-def create_forwarding_nodes(num, scheduling_algorithm):
-    forwarding_nodes = {}
+
+def create_forwarding_nodes():
+
     scheduling_algorithms = {
         1: "Strictly Rate-Proportional (SRP) latency",
         2: "Group-Based (GB) approximations of WFQ",
         3: "Schedulers with Weakly Rate-Proportional (WRP) latency",
         4: "Frame-Based (FB) schedulers’ latency"
     }
-    for i in range(num):
-        name = input(f"Enter name for Forwarding Node {i + 1}: ")
-        position = tuple(map(float, input(f"Enter position (x, y) for {name}: ").split(',')))
-        #algorithm = int(input(f"Select scheduling algorithm for {name} (1/2/3/4): "))
-        forwarding_nodes[name] = {'type': 'N', 'position': position,
-                                  'scheduling_algorithm': scheduling_algorithm}
+
+    # Sample input format in JSON
+    input_data = [
+        {
+            "name": "R12",
+            "position": "8.0,16.0",
+            "algorithm_choice": 1
+        },
+        {
+            "name": "R13",
+            "position": "8.0,12.0",
+            "algorithm_choice": 1},
+            {
+            "name": "R11",
+            "position": "12.0,14.0",
+            "algorithm_choice": 1
+        },
+        {
+            "name": "R10",
+            "position": "15.0,12.0",
+            "algorithm_choice": 1},
+            {
+            "name": "R32",
+            "position": "15.0,6.0",
+            "algorithm_choice": 1
+        },
+        {
+            "name": "R30",
+            "position": "18.0,8.0",
+            "algorithm_choice": 1},
+            {
+            "name": "R20",
+            "position": "20.0,12.0",
+            "algorithm_choice": 1
+        },
+        {
+            "name": "R31",
+            "position": "20.0,6.0",
+            "algorithm_choice": 1},
+            {
+            "name": "R21",
+            "position": "23.0,14.0",
+            "algorithm_choice": 1
+        },
+        {
+            "name": "R33",
+            "position": "26.0,12.0",
+            "algorithm_choice": 1},
+            {
+            "name": "R22",
+            "position": "26.0,16.0",
+            "algorithm_choice": 1
+        },
+        {
+            "name": "R24",
+            "position": "28.0,14.0",
+            "algorithm_choice": 1},
+    ]
+
+
+    # Parse the input data
+    nodes_info = input_data
+
+    forwarding_nodes = {}
+
+    for node in nodes_info:
+        name = node['name']
+        position = tuple(map(float, node['position'].split(',')))
+        algorithm_choice = node['algorithm_choice']
+        scheduling_algorithm = scheduling_algorithms[algorithm_choice]
+
+        forwarding_nodes[name] = {
+            'type': 'N',
+            'position': position,
+            'scheduling_algorithm': scheduling_algorithm
+        }
+
+    print(forwarding_nodes)
     return forwarding_nodes
 
 
 def connect_vertices(graph):
-    link_types = {
-        1: "edge link with bandwidth = 20 and latency = 30",
+    input_data = [
+        {
+            "source": "F11",
+            "target": "R12",
+            "link_type": 1
+        },
+        {
+            "source": "R12",
+            "target": "S1",
+            "link_type": 2
+        },
+        {
+            "source": "R12",
+            "target": "R13",
+            "link_type": 2
+        },
+        {
+            "source": "R13",
+            "target": "F12",
+            "link_type": 1
+        },
+        {
+            "source": "R13",
+            "target": "F13",
+            "link_type": 1
+        },
+        {
+            "source": "R13",
+            "target": "F14",
+            "link_type": 1
+        },
+        {
+            "source": "R13",
+            "target": "R11",
+            "link_type": 2
+        },{
+            "source": "R12",
+            "target": "R11",
+            "link_type": 2
+        },
+        {
+            "source": "R11",
+            "target": "F15",
+            "link_type": 1
+        },{
+            "source": "R11",
+            "target": "R10",
+            "link_type": 2
+        },
+        {
+            "source": "R11",
+            "target": "F16",
+            "link_type": 1
+        },{
+            "source": "R10",
+            "target": "R20",
+            "link_type": 3
+        },
+        {
+            "source": "R10",
+            "target": "R30",
+            "link_type": 3
+        },
+        {
+            "source": "R30",
+            "target": "R20",
+            "link_type": 3
+        },
+        {
+            "source": "R30",
+            "target": "R32",
+            "link_type": 2
+        },
+        {
+            "source": "R30",
+            "target": "R31",
+            "link_type": 1
+        },
+        {
+            "source": "R32",
+            "target": "F31",
+            "link_type": 1
+        },
+        {
+            "source": "R32",
+            "target": "F32",
+            "link_type": 1
+        },
+        {
+            "source": "R32",
+            "target": "R31",
+            "link_type": 2
+        },
+        {
+            "source": "R31",
+            "target": "F33",
+            "link_type": 1
+        },
+        {
+            "source": "R31",
+            "target": "F34",
+            "link_type": 1
+        },
+        {
+            "source": "R31",
+            "target": "RF35",
+            "link_type": 1
+        },
+        {
+            "source": "R20",
+            "target": "R21",
+            "link_type": 2
+        },
+        {
+            "source": "R21",
+            "target": "R23",
+            "link_type": 2
+        },
+        {
+            "source": "R21",
+            "target": "S2",
+            "link_type": 1
+        },
+        {
+            "source": "R23",
+            "target": "F36",
+            "link_type": 1
+        },
+        {
+            "source": "R23",
+            "target": "R24",
+            "link_type": 2
+        },
+        {
+            "source": "R21",
+            "target": "R22",
+            "link_type": 2
+        },
+        {
+            "source": "R32",
+            "target": "R31",
+            "link_type": 2
+        },
+        {
+            "source": "R31",
+            "target": "F33",
+            "link_type": 1
+        },
+        {
+            "source": "R31",
+            "target": "F34",
+            "link_type": 1
+        },
+        {
+            "source": "R22",
+            "target": "R24",
+            "link_type": 2
+        },
+        {
+            "source": "R22",
+            "target": "F21",
+            "link_type": 1
+        },
+        {
+            "source": "R32",
+            "target": "R31",
+            "link_type": 2
+        },
+        {
+            "source": "R31",
+            "target": "F33",
+            "link_type": 1
+        },
+        {
+            "source": "R31",
+            "target": "F34",
+            "link_type": 1
+        },
+        {
+            "source": "R31",
+            "target": "F35",
+            "link_type": 1
+        },
+        {
+            "source": "R20",
+            "target": "R21",
+            "link_type": 2
+        },{
+            "source": "R22",
+            "target": "F22",
+            "link_type": 1
+        },
+        {
+            "source": "R22",
+            "target": "F21",
+            "link_type": 1
+        },
+        {
+            "source": "R24",
+            "target": "F21",
+            "link_type": 1
+        },
+        {
+            "source": "R24",
+            "target": "F24",
+            "link_type": 1
+        },
+        {
+            "source": "R24",
+            "target": "F25",
+            "link_type": 2
+        },
+    ]
+    link_types = {  1: "edge link with bandwidth = 20 and latency = 30",
         2: "network link with bandwidth = 100 and latency = 25",
         3: "core link with bandwidth = 200 and latency = 20"
     }
-    while True:
-        source = input("Enter source vertex name (or 'done' to exit): ").upper()
-        if source == 'DONE':
-            break
-        target = input("Enter target vertex name: ").upper()
-        link_type = int(input("Enter link type (1/2/3): "))
+
+    # Parse the input data
+    connections = input_data
+
+    for connection in connections:
+        source = connection['source'].upper()
+        target = connection['target'].upper()
+        link_type = connection['link_type']
+
         if link_type in link_types:
-            bandwidth, latency = 20, 30
-            if link_type == 2:
+            if link_type == 1:
+                bandwidth, latency = 25, 30
+            elif link_type == 2:
                 bandwidth, latency = 100, 25
             elif link_type == 3:
                 bandwidth, latency = 200, 20
-            #link_description = link_types.get(link_type)
-            graph.add_edge(source, target, bandwidth=bandwidth, latency=latency, link_description=(bandwidth,latency))
+
+            graph.add_edge(source, target, bandwidth=bandwidth, latency=latency, link_description=link_types[link_type])
         else:
-            print("Invalid link type.")
+            print(f"Invalid link type: {link_type}")
 
 
 def save_graph(graph):
@@ -114,7 +444,7 @@ def display_graph(graph):
     fig, ax = plt.subplots()
     pos = nx.spring_layout(graph)
     color_map = []
-    for i in graph:
+    for i in graph.nodes:
         if graph.nodes[i]['type']== 'F':
             color_map.append('blue')
         elif graph.nodes[i]['type']== 'S':
@@ -142,29 +472,24 @@ def upload_graph():
         print("File not found.")
         return None
 
-def BulidGraph():
+def BuildGraph():
     graph = nx.Graph()
-    scheduling_algorithms_info = {
-        1: "Strictly Rate-Proportional (SRP) scheduling algorithm assigns priorities to packets based on their rates.",
-        2: "Group-Based (GB) scheduling approximates Weighted Fair Queuing (WFQ) using groups for packet scheduling.",
-        3: "Schedulers with Weakly Rate-Proportional (WRP) latency assign priorities based on weak rate proportionality.",
-        4: "Frame-Based (FB) schedulers use frame-based scheduling to manage latency."
-    }
 
-    print("Select a scheduling algorithm for forwarding nodes:")
-    for key, value in scheduling_algorithms_info.items():
-        print(f"{key} - {value}")
 
-    scheduling_algorithm = int(input("Enter the scheduling algorithm (1/2/3/4): "))
+    #print("Select a scheduling algorithm for forwarding nodes:")
+    #for key, value in scheduling_algorithms_info.items():
+    #    print(f"{key} - {value}")
 
-    num_field_devices = int(input("Enter number of Field Devices: "))
-    field_devices = create_field_devices(num_field_devices)
+    #scheduling_algorithm = 1 #int(input("Enter the scheduling algorithm (1/2/3/4): "))
 
-    num_servers = int(input("Enter number of Servers: "))
-    servers = create_servers(num_servers)
+    #num_field_devices = int(input("Enter number of Field Devices: "))
+    field_devices = create_field_devices()
 
-    num_forwarding_nodes = int(input("Enter number of Forwarding Nodes: "))
-    forwarding_nodes = create_forwarding_nodes(num_forwarding_nodes, scheduling_algorithm)
+    #num_servers = int(input("Enter number of Servers: "))
+    servers = create_servers()
+
+    #num_forwarding_nodes = int(input("Enter number of Forwarding Nodes: "))
+    forwarding_nodes = create_forwarding_nodes()
 
     # Add nodes to the graph
     graph.add_nodes_from([(name, data) for name, data in field_devices.items()])
