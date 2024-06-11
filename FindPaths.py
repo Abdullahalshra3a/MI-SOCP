@@ -50,7 +50,8 @@ def sorted_paths():
         paths = {}
         for device in field_devices:
             Device_paths = find_paths(graph, device)#[([0, 1, 3], {'wcd': 0}), ([0, 2, 3], {'wcd': 0}), ([0, 3], {'wcd': 0})]
-            paths = {device: tuple(Device_paths)}#{'f1': ([0, 1, 3], {'wcd': 0}), ([0, 2, 3], {'wcd': 0}), ([0, 3], {'wcd': 0})}
+            paths.update({device: tuple(Device_paths)})#{'f1': ([0, 1, 3], {'wcd': 0}), ([0, 2, 3], {'wcd': 0}), ([0, 3], {'wcd': 0})}
+            #print(paths)
             #paths[device] = Device_paths
 
             # Sort paths for each field device based on WCD (shortest to longest)
