@@ -231,7 +231,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
         print("All variable names are valid and constraints added successfully.")
         """""""""
 
-  
+
 
 
         num_edges = resource_graph.number_of_edges()
@@ -398,8 +398,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                             rhs=[0.0]
                         )
 
-                        theta_ij = L * prob.variables.get_indices(s_ij_var) + (
-                                    L / prob.variables.get_indices(x_ij_var)) * prob.variables.get_indices(x_ij_var)
+                        theta_ij = L * prob.variables.get_indices(s_ij_var) + ( L / prob.variables.get_indices(x_ij_var)) * prob.variables.get_indices(x_ij_var)
                         wcd_expr[0][0].append(s_ij_var)
                         wcd_expr[0][1].append(L)
                         wcd_expr[0][0].append(x_ij_var)
@@ -411,6 +410,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                         rhs=[flow[device]['deadline']]
                     )
                     H += 1
+                    print(wcd_expr[0][1])
                     #flow[device]['paths'][H][1]['wcd'] = wcd_expr  # Save the calculated WCD value
 
         elif scheduling_algorithm == 2:  # Group-Based (GB) scheduling algorithm
@@ -588,21 +588,22 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
             total_cost = 0
 
             # Iterate through each field device
-            for primary_device in field_devices:
-                primary_device_paths = flow[primary_device]['paths']
+            for device in field_devices:
+                paths = flow[device]['paths']
 
                 # Consider each path of the primary device
-                for primary_path in primary_device_paths:
+                for path in paths:
                     total_reserved_rates = 0
 
                     # Initialize reserved rates with the primary device's path if it uses edge (i, j)
-                    if Check_edge_inpath(primary_path[0], i, j):
-                        total_reserved_rates += flow[primary_device]['reserved_rates']
+                    if Check_edge_inpath(path[0], i, j):
+                        total_reserved_rates += flow[device]['reserved_rates']
 
                     # For all other devices, consider all combinations of their paths
-                    other_devices = [device for device in field_devices if device != primary_device]
+                    other_devices = [x for x in field_devices if x != device]
                     all_combinations = list(product(*[flow[device]['paths'] for device in other_devices]))
-
+                    print(device, len(all_combinations))
+                    exit(0)
                     for combination in all_combinations:
                         combination_reserved_rates = total_reserved_rates
 
