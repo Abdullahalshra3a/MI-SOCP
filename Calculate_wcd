@@ -6,7 +6,15 @@ import networkx as nx
 import matplotlib.pyplot as plt
 from itertools import product
 from collections import OrderedDict
+import re
 
+def is_valid_variable_name(name):
+    # Variable names must start with a letter or underscore and contain only alphanumeric characters and underscores
+    return re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', name) is not None
+
+# Function to generate consistent variable names for edges
+def generate_edge_variable_name(edge):
+    return 'x_{}_{}'.format(*sorted(edge))
 service_types = {
     1: {"name": "AR", "bandwidth": 2.5, "latency": 100, "processor_cores": 1, "Memory_GB": 2, "Storage_GB": 4},
     2: {"name": "CVC", "bandwidth": 3, "latency": 500, "processor_cores": 1, "Memory_GB": 2, "Storage_GB": 4},
@@ -66,17 +74,10 @@ def flow_number(i, j, field_devices, flow):
     return P[i][j]
 
 def Check_edge_inpath(path, i, j):
-    """
-    Check if nodes i and j are sequentially connected in the given path.
 
-    :param path: List of nodes representing the path.
-    :param i: The first node.
-    :param j: The second node.
-    :return: True if i and j are sequentially connected in the path, otherwise False.
-    """
-    for index in range(len(path) - 1):
-        if path[index] == i and path[index + 1] == j:
-            return True
+    for x in range(len(path) - 1):
+        if [path[x], path[x + 1]] == [i, j] or [path[x], path[x + 1]] == [j, i]:
+           return True
     return False
 
 
@@ -84,8 +85,8 @@ def Check_edge_inpath(path, i, j):
 def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_algorithm = 1, sigma=1500, rho=1500):
     try:
         # Ensure the graph is directed
-        if not isinstance(resource_graph, nx.DiGraph):
-            resource_graph = nx.DiGraph(resource_graph)
+        #if not isinstance(resource_graph, nx.DiGraph):
+         #   resource_graph = nx.DiGraph(resource_graph)
 
         # Create a CPLEX problem
         prob = Cplex()
@@ -135,15 +136,15 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
         prob.variables.add(names=r_reservation_variables,
                            types=[prob.variables.type.continuous] * len(r_reservation_variables))
         prob.variables.add(names=c_ij_variables, types=[prob.variables.type.continuous] * len(c_ij_variables))
-
+        """""""""
         # Debug: Print variable names to verify
-        print("Edge Variables Binary:", edge_variables_binary)
-        print("Rate Variables:", rate_variables)
-        print("R Min Variables:", r_min_variables)
-        print("X Variables:", x_variables)
-        print("R Reservation Variables:", r_reservation_variables)
-        print("C IJ Variables:", c_ij_variables)
-
+        print("Edge Variables Binary: \n", edge_variables_binary)
+        print("Rate Variables: \n", rate_variables)
+        print("R Min Variables:\n", r_min_variables)
+        print("X Variables:\n", x_variables)
+        print("R Reservation Variables:\n", r_reservation_variables)
+        print("C IJ Variables:\n", c_ij_variables)
+        """""""""
         # The set K of existing flows
         flow = {}
         for device in field_devices_delta:
@@ -153,12 +154,13 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
             flow[device]['burst'] = sigma
             flow[device]['rate'] = rho * tau
             flow[device]['reserved_rates'] = rho * tau + sigma
+            #print(flow[device])
 
         # Add constraints for total reserved rates and bandwidth
         check = []
         for i, j in resource_graph.edges:
             expr = []  # Constraint 1: Total reserved rates on edge (i, j) should not exceed the link bandwidth
-            for device in field_devices_delta:
+            for device in field_devices:
                 for path in flow[device]['paths']:
                     path_nodes = path[0]  # List of nodes in the path
                     if Check_edge_inpath(path_nodes, i, j):
@@ -167,6 +169,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                             print(f"Error: {rate_var_name} not found in rate_variables")
                         rate_var_index = rate_variables.index(rate_var_name)
                         rate_var = rate_variables[rate_var_index]
+
                         if rate_var not in check:
                           check.append(rate_var)
                           # Constraint: r_ij <= reserved_rates
@@ -191,25 +194,48 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                 senses=['L'],
                 rhs=[resource_graph[i][j]['bandwidth']]
             )
-
-        # Routing constraints (point 5)
+        """""""""
+        # Routing constraints (point 5)# Routing constraints for an undirected graph
+        # Routing constraints for an undirected graph
         for node in resource_graph.nodes:
-            if resource_graph.nodes[node]['type'] == 'N':
-                incoming_edges = [edge for edge in resource_graph.in_edges(node)]
-                outgoing_edges = [edge for edge in resource_graph.out_edges(node)]
-                bs_i = ['x_{}_{}'.format(j, i) for j, i in incoming_edges]
-                fs_i = ['x_{}_{}'.format(i, j) for i, j in outgoing_edges]
+            node_type = resource_graph.nodes[node].get('type', '')
+            print(f"Processing node: {node}, Type: {node_type}")
 
-                # Standard flow conservation constraints
+            if node_type == 'N':
+                connected_edges = list(resource_graph.edges(node))
+
+                print(f"Connected edges for node {node}: {connected_edges}")
+
+                # Generate variable names ensuring consistency (alphabetical order in naming)
+                edge_vars = [generate_edge_variable_name(edge) for edge in connected_edges]
+
+                # Validate variable names
+                for var in edge_vars:
+                    if not is_valid_variable_name(var):
+                        raise ValueError(f"Invalid variable name: {var}")
+
+                # Generate coefficients for the linear expression
+                coefficients = [1 if edge[1] == node else -1 for edge in connected_edges]
+
+                print(f"Node: {node}, Edge Variables: {edge_vars}")
+                print(f"Coefficients: {coefficients}")
+
+                # Flow conservation constraint
                 prob.linear_constraints.add(
-                    lin_expr=[[bs_i + fs_i, [-1] * len(bs_i) + [1] * len(fs_i)]],
+                    lin_expr=[[edge_vars, coefficients]],
                     senses=['E'],
                     rhs=[-1 if node == 's' else (1 if node == 'd' else 0)],
                     names=['c_flow_conservation_{}'.format(node)]
                 )
 
+        print("All variable names are valid and constraints added successfully.")
+        """""""""
+
+  
+
+
         num_edges = resource_graph.number_of_edges()
-        all_min_rate = [[None for _ in range(num_edges)] for _ in range(num_edges)]
+        all_min_rate = {edge: idx for idx, edge in enumerate(resource_graph.edges)}
 
         # Create a mapping from edges to integer indices
         edge_to_index = {edge: idx for idx, edge in enumerate(resource_graph.edges)}
@@ -228,7 +254,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                 r_min_var_name = 'r_min_{}_{}'.format(i, j)
                 r_min_var_index = r_min_variables.index(r_min_var_name)
                 r_min_var = r_min_variables[r_min_var_index]
-
+                print(min(min_rate))
                 # Constraint: r_ij^min = min { r_ij^k : k ∈ P(i, j) }
                 prob.linear_constraints.add(
                     lin_expr=[[[r_min_var], [1.0]]],
@@ -241,8 +267,9 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                     senses=['G'],
                     rhs=[rho]
                 )
-                all_min_rate[edge_to_index[edge]][edge_to_index[edge]] = min(min_rate)
+                all_min_rate[i,j] = min(min_rate)
 
+        print(all_min_rate)
         # Add constraints for reservable capacity c_ij
         for i, j in resource_graph.edges:
             reserved_capacity = []
@@ -275,8 +302,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                                 rhs=[resource_graph[i][j]['bandwidth'] - reserved_capacity_summation]
                             )
 
-                        if flow[device]['reserved_rates'] <= (
-                                resource_graph[i][j]['bandwidth'] - sum(reserved_capacity)):
+                        if flow[device]['reserved_rates'] <= ( resource_graph[i][j]['bandwidth'] - sum(reserved_capacity)):
                             reserved_capacity.append(flow[device]['reserved_rates'])
 
                         # Constraints: 0 ≤ r_ij ≤ c_ij * x_ij (point 6)
@@ -310,25 +336,52 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                             senses=['L'],
                             rhs=[c_max_variable]
                         )
-        print(0)
         # Scheduling algorithm constraints (point 7)
+        path_min_rate = []
+        #def check(a):
+        #    return a%2
+        #simple_list = [a for a in [b in range(100)] if check(a)]
         if scheduling_algorithm == 1:  # Strictly Rate-Proportional (SRP) scheduling algorithm
             for device in field_devices:
                 H = 0
                 for path in flow[device]['paths']:
                     path_nodes = path[0]  # List of nodes in the path
-                    path_min_rate = [all_min_rate[path_nodes[i]][path_nodes[i + 1]] for i in range(len(path_nodes) - 1)]
-                    t = sigma / min(path_min_rate)
-                    l_ij = propagation_delay / 1000  # Propagation delay converted to ms
-                    n_i = 40 / 1000  # Node delay converted to ms
-                    wcd = t
-                    r_ij = flow[device]['rate']
-                    w_ij = resource_graph[i][j]['bandwidth']  # Available bandwidth for the edge from node i to node j
-                    L = 1500  # The MTU L is fixed to 1500 bytes.
                     for i in range(len(path_nodes) - 1):
-                        j = i + 1
-                        s_ij_var = "s_{}_{}".format(path_nodes[i], path_nodes[j])
-                        x_ij_var = "x_{}_{}".format(path_nodes[i], path_nodes[j])
+                        key = (path_nodes[i], path_nodes[i + 1])
+                        reversed_key = key[::-1]
+                        if key in all_min_rate or reversed_key in all_min_rate:
+                            if key in all_min_rate:
+                                value = all_min_rate[key]
+                            else:
+                                key = reversed_key
+                                value = all_min_rate[reversed_key]
+                            #print(key, value)
+                            path_min_rate.append(value)
+                    t = sigma / min(path_min_rate)
+                    l_ij = 0.01  # Placeholder for propagation delay in ms
+                    n_i = 0.04  # Node delay converted to ms
+                    wcd_expr = [[[], []]]  # Initialize wcd as a linear expression
+                    r_ij = flow[device]['rate']
+                    L = 1500  # The MTU L is fixed to 1500 bytes.
+
+                    # Define t as a continuous variable
+                    t_var = "t_{}_{}".format(device, H)
+                    prob.variables.add(names=[t_var], types=[prob.variables.type.continuous])
+
+                    # Add constraint t >= 0
+                    prob.linear_constraints.add(
+                        lin_expr=[[[t_var], [1.0]]],
+                        senses=['G'],
+                        rhs=[0.0]
+                    )
+
+                    wcd_expr[0][0].append(t_var)
+                    wcd_expr[0][1].append(1.0)
+
+                    for k in range(len(path_nodes) - 1):
+                        u, v = path_nodes[k], path_nodes[k + 1]
+                        s_ij_var = "s_{}_{}".format(u, v)
+                        x_ij_var = "x_{}_{}".format(u, v)
                         prob.variables.add(names=[s_ij_var], types=[prob.variables.type.continuous])
                         prob.variables.add(names=[x_ij_var], types=[prob.variables.type.binary])
 
@@ -336,30 +389,29 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                         prob.linear_constraints.add(
                             lin_expr=[[[s_ij_var], [r_ij]]],
                             senses=['G'],
-                            rhs=[x_ij_var ** 2]
+                            rhs=[1.0]  # x_ij^2 becomes a constant 1.0 for binary variables
                         )
                         # Add constraint s_ij >= 0
                         prob.linear_constraints.add(
-                            lin_expr=[[[s_ij_var], [1]]],
+                            lin_expr=[[[s_ij_var], [1.0]]],
                             senses=['G'],
-                            rhs=[0]
-                        )
-                        prob.linear_constraints.add(
-                            lin_expr=[[[t], [1]]],
-                            senses=['G'],
-                            rhs=[0]
+                            rhs=[0.0]
                         )
 
-                        theta_ij = L * s_ij_var + (L / w_ij) * x_ij_var
-                        wcd = wcd + (L * s_ij_var + (L / w_ij) + l_ij + n_i) * x_ij_var
+                        theta_ij = L * prob.variables.get_indices(s_ij_var) + (
+                                    L / prob.variables.get_indices(x_ij_var)) * prob.variables.get_indices(x_ij_var)
+                        wcd_expr[0][0].append(s_ij_var)
+                        wcd_expr[0][1].append(L)
+                        wcd_expr[0][0].append(x_ij_var)
+                        wcd_expr[0][1].append((L / prob.variables.get_indices(x_ij_var)) + l_ij + n_i)
+
                     prob.linear_constraints.add(
-                        lin_expr=[[[wcd], [1]]],
+                        lin_expr=wcd_expr,
                         senses=['G'],
-                        rhs=[flow[device]['deadline']])
-                    H = H + 1
-                    flow[device]['paths'][H][1]['wcd'] = wcd  # Save the calculated WCD value
-
-
+                        rhs=[flow[device]['deadline']]
+                    )
+                    H += 1
+                    #flow[device]['paths'][H][1]['wcd'] = wcd_expr  # Save the calculated WCD value
 
         elif scheduling_algorithm == 2:  # Group-Based (GB) scheduling algorithm
             for device in field_devices:
