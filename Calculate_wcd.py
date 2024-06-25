@@ -685,10 +685,19 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                     # flow[device]['paths'][H][1]['wcd'] = wcd  # Dictionary with 'wcd' value
 
         # Objective function: min ∑((i,j)∈A)〖f_ij * r_ij〗
-        objective = []
-        for i, j in resource_graph.edges:
-            total_cost = 0
+        """
+            Adds the linear objective function to the CPLEX model to minimize
+            the weighted amount of allocated rate along the path using the given reservation costs f_ij.
 
+            Args:
+                prob: The CPLEX problem object.
+                resource_graph: The resource graph containing the edges.
+                field_devices: List of field devices.
+                flow: The flow information for each device.
+            """
+        objective_dict = {}
+
+        for i, j in resource_graph.edges:
             # Iterate through each field device
             for primary_device in field_devices:
                 primary_device_paths = flow[primary_device]['paths']
@@ -704,32 +713,32 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                     # For all other devices, consider their paths without generating all combinations
                     other_devices = [device for device in field_devices if device != primary_device]
                     combinations_iterator = product(*[flow[device]['paths'] for device in other_devices])
-
                     # Limit to the first 10 combinations
-                    for combination in islice(combinations_iterator, 100):
+                    for combination in islice(combinations_iterator, 1):
                         combination_reserved_rates = total_reserved_rates
-
+                        print(combination)
                         # Add reserved rates from the paths of other devices in the combination
                         for other_path in combination:
-                            other_device = next(
-                                device for device in other_devices if flow[device]['paths'].count(other_path))
+                            other_device = next(device for device in other_devices if flow[device]['paths'].count(other_path))
                             if Check_edge_inpath(other_path[0], i, j):
                                 combination_reserved_rates += flow[other_device]['reserved_rates']
 
                         # Calculate the cost for the current combination
                         # Only consider the reservation value if it's less than or equal to the bandwidth
                         if combination_reserved_rates <= resource_graph[i][j]['bandwidth']:
-                            f_ij = combination_reserved_rates
                             r_ij_var = 'r_{}_{}'.format(i, j)
-                            objective.append((r_ij_var, f_ij))
+                            if r_ij_var not in objective_dict:
+                                objective_dict[r_ij_var] = 0
+                            objective_dict[r_ij_var] += combination_reserved_rates
                         else:
                             return str(
                                 'inf: Arbitrarily high cost if the reservation exceeds bandwidth')  # Arbitrarily high cost if the reservation exceeds bandwidth
 
+        # Convert the dictionary to the format required by CPLEX
+        objective = [(var, cost) for var, cost in objective_dict.items()]
 
         # Set the objective function to minimize the weighted amount of allocated rate
         prob.objective.set_sense(prob.objective.sense.minimize)
-
         prob.objective.set_linear(objective)
 
         #prob.objective.set_linear(objective)
@@ -737,6 +746,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
 
         # Solve the problem
         prob.solve()
+        print('uuuu')
         # Return the solution status and variables
         return prob.solution.get_status(), prob.solution.get_values()
 
@@ -747,5 +757,3 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
 # if __name__ == "__main__":
 result = solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_algorithm, 1500, 1500)
 print(result)
-
-
