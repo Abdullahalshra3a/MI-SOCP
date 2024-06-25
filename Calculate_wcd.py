@@ -4,7 +4,8 @@ from cplex.exceptions import CplexError
 from FindPaths import sorted_paths
 import networkx as nx
 import matplotlib.pyplot as plt
-from itertools import product
+from itertools import islice, product
+
 from collections import OrderedDict
 import re
 
@@ -80,9 +81,9 @@ def Check_edge_inpath(path, i, j):
            return True
     return False
 
-
-
-def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_algorithm = 1, sigma=1500, rho=1500):
+for i, j in resource_graph.edges:
+    resource_graph[i][j]['bandwidth'] = resource_graph[i][j]['bandwidth'] * 1000
+def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_algorithm = 1, sigma=1500, rho=1500):#MTU = 150 byte
     try:
         # Ensure the graph is directed
         #if not isinstance(resource_graph, nx.DiGraph):
@@ -702,24 +703,33 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
 
                     # For all other devices, consider their paths without generating all combinations
                     other_devices = [device for device in field_devices if device != primary_device]
-                    for other_device in other_devices:
-                        other_device_paths = flow[other_device]['paths']
-                        for other_path in other_device_paths:
-                            if Check_edge_inpath(other_path[0], i, j):
-                                total_reserved_rates += flow[other_device]['reserved_rates']
+                    combinations_iterator = product(*[flow[device]['paths'] for device in other_devices])
 
-                            # Calculate the cost for the current combination
-                            # Only consider the reservation value if it's less than or equal to the bandwidth
-                            if total_reserved_rates <= resource_graph[i][j]['bandwidth']:
-                                f_ij = reservation_costs.get((i, j),
-                                                             1) * total_reserved_rates  # Apply the reservation cost f_ij
-                                r_ij_var = 'r_{}_{}'.format(i, j)
-                                objective.append((r_ij_var, f_ij))
-                            else:
-                                return str('inf: Arbitrarily high cost if the reservation exceeds bandwidth')  # Arbitrarily high cost if the reservation exceeds bandwidth
+                    # Limit to the first 10 combinations
+                    for combination in islice(combinations_iterator, 100):
+                        combination_reserved_rates = total_reserved_rates
+
+                        # Add reserved rates from the paths of other devices in the combination
+                        for other_path in combination:
+                            other_device = next(
+                                device for device in other_devices if flow[device]['paths'].count(other_path))
+                            if Check_edge_inpath(other_path[0], i, j):
+                                combination_reserved_rates += flow[other_device]['reserved_rates']
+
+                        # Calculate the cost for the current combination
+                        # Only consider the reservation value if it's less than or equal to the bandwidth
+                        if combination_reserved_rates <= resource_graph[i][j]['bandwidth']:
+                            f_ij = combination_reserved_rates
+                            r_ij_var = 'r_{}_{}'.format(i, j)
+                            objective.append((r_ij_var, f_ij))
+                        else:
+                            return str(
+                                'inf: Arbitrarily high cost if the reservation exceeds bandwidth')  # Arbitrarily high cost if the reservation exceeds bandwidth
+
 
         # Set the objective function to minimize the weighted amount of allocated rate
         prob.objective.set_sense(prob.objective.sense.minimize)
+
         prob.objective.set_linear(objective)
 
         #prob.objective.set_linear(objective)
@@ -737,6 +747,5 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
 # if __name__ == "__main__":
 result = solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_algorithm, 1500, 1500)
 print(result)
-
 
 
