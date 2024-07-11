@@ -156,38 +156,51 @@ def plot_subgraphs(combinations, resource_graph, num_plots=10):
     plt.tight_layout()
     plt.show()
 
+
 def log_infeasible_constraints(prob):
     infeasible_constraints = []
     try:
-        # Refine conflicts and get the conflicting indices
+        # Attempt to refine conflicts
         prob.conflict.refine(prob.conflict.all_constraints())
+
+        # If we reach this point, conflict refinement was successful
         conflicts = prob.conflict.get()
 
-        # Iterate over the conflict indices
-        for conflict_type, index in zip(conflicts[0], conflicts[1]):
-            if conflict_type == prob.conflict.constraint_type.linear:
-                constraint_name = prob.linear_constraints.get_names(index)
-                row = prob.linear_constraints.get_rows(index)
-                lhs = sum(prob.solution.get_values(ind) * val for ind, val in zip(row.ind, row.val))
-                rhs = prob.linear_constraints.get_rhs(index)
-                sense = prob.linear_constraints.get_senses(index)
-                infeasible_constraints.append((constraint_name, lhs, sense, rhs))
-            elif conflict_type == prob.conflict.constraint_type.lower_bound:
-                var_name = prob.variables.get_names(index)
-                lb = prob.variables.get_lower_bounds(index)
-                infeasible_constraints.append((f'Lower bound on {var_name}', lb, 'L', lb))
-            elif conflict_type == prob.conflict.constraint_type.upper_bound:
-                var_name = prob.variables.get_names(index)
-                ub = prob.variables.get_upper_bounds(index)
-                infeasible_constraints.append((f'Upper bound on {var_name}', ub, 'U', ub))
+        if isinstance(conflicts, list):
+            conflict_indices = [i for i, val in enumerate(conflicts) if val != -1]
+            for index in conflict_indices:
+                if index < prob.linear_constraints.get_num():
+                    constraint_name = prob.linear_constraints.get_names(index)
+                    row = prob.linear_constraints.get_rows(index)
+                    rhs = prob.linear_constraints.get_rhs(index)
+                    sense = prob.linear_constraints.get_senses(index)
+                    infeasible_constraints.append((constraint_name, "Unknown LHS", sense, rhs))
+                else:
+                    var_index = index - prob.linear_constraints.get_num()
+                    var_name = prob.variables.get_names(var_index)
+                    lb = prob.variables.get_lower_bounds(var_index)
+                    ub = prob.variables.get_upper_bounds(var_index)
+                    infeasible_constraints.append((f'Bounds on {var_name}', lb, 'L', ub))
+        else:
+            print(f"Unexpected format of conflicts: {conflicts}")
 
     except cplex.exceptions.CplexError as e:
-        print(f"CPLEX Error during conflict refinement: {e}")
-    except IndexError as e:
-        print(f"IndexError during conflict refinement: {e}")
+        if "1217" in str(e):  # CPLEX Error 1217: No solution exists
+            print("The problem is infeasible. CPLEX could not refine the conflict.")
+            print("Consider the following steps:")
+            print("1. Check your constraint formulations for logical errors.")
+            print("2. Verify that your input data is correct.")
+            print("3. Consider relaxing some constraints if appropriate.")
+            print("4. Use prob.feasopt() to find a minimal set of constraints to relax.")
+        else:
+            print(f"CPLEX Error during conflict refinement: {e}")
     except Exception as e:
         print(f"Unexpected error during conflict refinement: {e}")
+
     return infeasible_constraints
+
+
+
 
 
 def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_algorithm=1, sigma=1500, rho=1500):
@@ -248,7 +261,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
         combinations_generator = generate_path_combinations(flow)
 
         # Process the first 100 combinations
-        first_100_combinations = list(itertools.islice(combinations_generator, 100))
+        first_100_combinations = list(itertools.islice(combinations_generator, 1))
 
         # Initialize storage for results
         valid_solutions = []
@@ -603,3 +616,13 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
 # if __name__ == "__main__":
 result = solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_algorithm, 1500, 1500)
 print(result)
+# In your main code, after calling solve_optimal_path:
+if result is (None or []):
+    print("No valid solution found. The problem may be infeasible.")
+    infeasible_constraints = log_infeasible_constraints(prob)
+    if infeasible_constraints:
+        print("Infeasible constraints:")
+        for constraint in infeasible_constraints:
+            print(constraint)
+    else:
+        print("No specific infeasible constraints identified.")
