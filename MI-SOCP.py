@@ -5,7 +5,9 @@ from FindPaths import sorted_paths
 import networkx as nx
 import itertools
 from math import prod
-
+import time
+import random
+from collections import Counter
 # Define service types with their characteristics
 service_types = {
     1: {"name": "AR", "bandwidth": 2.5, "latency": 100, "processor_cores": 1, "Memory_GB": 2, "Storage_GB": 4},
@@ -36,18 +38,17 @@ def generate_edge_variable_name(edge):
     """Generate consistent variable names for edges"""
     return 'x_{}_{}'.format(*sorted(edge))
 
-def flow_number(i, j, field_devices, flow):
+def flow_number(node1, node2, combination):
     """Calculate the flow number for an edge"""
-    if i not in P:
-        P[i] = {}
-    if j not in P[i]:
-        P[i][j] = 0
-        for device in field_devices:
-            for path in flow[device]['paths']:
-                if Check_edge_inpath(path, i, j):
-                    P[i][j] += 1
-                    break
-    return P[i][j]
+    count = 0
+
+    for device, path in combination.items():
+        for i in range(len(path) - 1):
+            if path[i] == node1 and path[i + 1] == node2:
+                count += 1
+                break  # Move to the next path once we find a match
+
+    return count
 
 def Check_edge_inpath(path, i, j):
     """Check if an edge is in a path"""
@@ -61,17 +62,119 @@ def calculate_total_combinations(flow):
     path_counts = [len(flow[device]['paths']) for device in flow]
     return prod(path_counts)
 
-def generate_path_combinations(flow):
-    """Generate all possible path combinations"""
-    device_paths = {device: [tuple(path[0]) for path in flow[device]['paths']] for device in flow}
+
+def calculate_wcd(combination, resource_graph, scheduling_algorithm):
+    for device, path in combination.items():
+        wcd_var = f"wcd_{device}"
+        calculated_wcd = prob.solution.get_values(wcd_var)
+        deadline = field_devices_delta[device]
+
+        print(f"Device: {device}")
+        print(f"Calculated WCD: {calculated_wcd}")
+        print(f"Deadline (field_devices_delta): {deadline}")
+        print(f"Path: {path}")
+
+        total_wcd = 0
+        for i, j in zip(path[:-1], path[1:]):
+            edge = (i, j)
+            bandwidth = resource_graph[i][j]['bandwidth']
+            latency = resource_graph[i][j]['latency']
+            L = 1500  # Make sure this matches your packet size
+            n_i = 40 / 1000  # Node processing delay, ensure this matches your definition
+
+            # Get the flow rate for this edge and device
+            flow_rate_var = f"r_{device}_{i}_{j}"
+            flow_rate = prob.solution.get_values(flow_rate_var)
+
+            # Get the s variable for this edge and device
+            s_var = f"s_{device}_{i}_{j}"
+            s_value = prob.solution.get_values(s_var)
+
+            # Calculate edge delay based on scheduling algorithm
+            if scheduling_algorithm == 1:  # Strictly Rate-Proportional (SRP)
+                edge_delay = L * s_value + (L / bandwidth + latency + n_i)
+            elif scheduling_algorithm == 2:  # Group-Based (GB)
+                edge_delay = 6 * L * s_value + (2 * L / bandwidth + latency + n_i)
+            elif scheduling_algorithm == 3:  # Weakly Rate-Proportional (WRP)
+                paths_using_edge = flow_number(i, j, combination)
+                edge_delay = L * s_value + (L / flow_rate + L / bandwidth + latency + n_i) * paths_using_edge
+            elif scheduling_algorithm == 4:  # Frame-Based (FB)
+                v_var = f"v_{device}_{i}_{j}"
+                v_value = prob.solution.get_values(v_var)
+                paths_using_edge = flow_number(i, j, combination)
+                edge_delay = L * s_value * (L / latency + L / bandwidth) * paths_using_edge + v_value + latency + n_i
+            else:
+                raise ValueError("Invalid scheduling algorithm")
+
+            total_wcd += edge_delay
+
+            print(f"Edge {i}-{j}:")
+            print(f"  Flow rate: {flow_rate}")
+            print(f"  s value: {s_value}")
+            print(f"  Edge delay: {edge_delay}")
+
+        print(f"Total calculated WCD: {total_wcd}")
+        print(f"Difference from CPLEX WCD: {abs(total_wcd - calculated_wcd)}")
+        print("--------------------")
+def generate_path_combinations(flow, max_combinations=100000, max_paths_per_device=5):
+    """Generate a sample of path combinations prioritizing variety and shorter paths"""
+    device_paths = {}
+    for device in flow:
+        # Sort paths by length (shortest first) and take the top max_paths_per_device
+        paths = sorted([tuple(path[0]) for path in flow[device]['paths']], key=len)[:max_paths_per_device]
+        device_paths[device] = paths
+
     devices = list(device_paths.keys())
 
-    def combinations_generator():
-        for combination in itertools.product(*device_paths.values()):
-            yield dict(zip(devices, combination))
+    def sample_combinations():
+        seen_combinations = set()
+        attempts = 0
+        max_attempts = max_combinations * 10  # Limit total attempts to avoid infinite loop
 
-    return combinations_generator()
+        while len(seen_combinations) < max_combinations and attempts < max_attempts:
+            # Generate a random combination
+            combination = tuple(random.choice(paths) for paths in device_paths.values())
 
+            if combination not in seen_combinations:
+                seen_combinations.add(combination)
+                yield dict(zip(devices, combination))
+
+            attempts += 1
+
+        print(f"Generated {len(seen_combinations)} unique combinations")
+
+    # Sort the sampled combinations by total path length
+    sampled_combinations = sorted(sample_combinations(), key=lambda x: sum(len(path) for path in x.values()))
+
+    return sampled_combinations
+
+
+
+
+
+def analyze_edge_usage(combinations):
+    """
+    Analyze the usage of edges across all paths in the given combinations.
+
+    Args:
+    combinations (list): A list of dictionaries, where each dictionary represents a combination
+                         of paths for different devices.
+
+    Returns:
+    list: A list of tuples (edge, count), sorted by count in descending order.
+    """
+    edge_counter = Counter()
+
+
+    for path in combinations.values():
+            # Create edges from consecutive nodes in the path
+            edges = list(zip(path[:-1], path[1:]))
+            edge_counter.update(edges)
+
+    # Sort edges by usage count in descending order
+    sorted_edges = sorted(edge_counter.items(), key=lambda x: x[1], reverse=True)
+
+    return sorted_edges
 def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_algorithm=1, sigma=1500, rho=1500):
     """Main function to solve the optimal path problem"""
     prob = None
@@ -112,15 +215,21 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
         total_combinations = calculate_total_combinations(flow)
         print(f"Total number of combinations: {total_combinations}")
 
+        # Usage
         combinations_generator = generate_path_combinations(flow)
 
-        first_100_combinations = list(itertools.islice(combinations_generator, 10))
+        # Get all combinations
+        #all_combinations = list(combinations_generator)
+
+        first_100_combinations = list(itertools.islice(combinations_generator, 100))
 
         valid_solutions = []
         valid_solution_count = 0
+        wcd_values = {}
 
         # Iterate through the first 100 combinations
         for combination in first_100_combinations:
+
             prob = cplex.Cplex()
             prob.set_problem_type(prob.problem_type.MIQCP)
             added_variables = set()
@@ -142,6 +251,8 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                 if current_reserved_rate > cmax:
                     cmax = current_reserved_rate
 
+                path_min_value = float('inf')  # Initialize path minimum value
+
                 # Process each edge in the path
                 for i, j in zip(path[:-1], path[1:]):
                     edge = (i, j)
@@ -160,50 +271,57 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                         reservable_capacity[edge] = 0
                         rmin[edge] = float('inf')
 
-                    # Update rmin for the current edge
+                    # Update rijmin for the current edge
                     if current_reserved_rate < rmin[edge]:
                         rmin[edge] = current_reserved_rate
 
-                    # Add constraints
+                    # Update path_rmin_value
+                    path_min_value = min(path_min_value, rmin[edge])
+                    # Update reservable capacity and remaining capacity
+                    reservable_capacity[edge] += current_reserved_rate
+                    remaining_capacity[edge] = resource_graph[i][j]['bandwidth'] - reservable_capacity[edge]
 
+                # Store the minimum value for the entire path
+                flow[device]['path_min_value'] = path_min_value
+
+
+                    # Add constraints
                     # The edge capacity = the edge bandwidth (wij)
-                    add_constraint_if_new(
+                add_constraint_if_new(
                         f"cap_{i}_{j}",
                         cplex.SparsePair([edge_capacity], [1.0]),
                         'E', remaining_capacity[edge]
                     )
 
                     # Constraint: flow rate(rij) <= remaining capacity
-                    add_constraint_if_new(
+                add_constraint_if_new(
                         f"flow_cap_{device}_{i}_{j}",
                         cplex.SparsePair([flow_rate_var], [1.0]),
                         'L', remaining_capacity[edge]
                     )
 
                     # Constraint: rij >= ρ
-                    add_constraint_if_new(
+                add_constraint_if_new(
                         f"rho_{device}_{i}_{j}",
                         cplex.SparsePair([flow_rate_var], [1.0]),
                         'G', rho
                     )
 
                     # Constraint: flow rate = flow[device]['reserved_rates']
-                    add_constraint_if_new(
+                add_constraint_if_new(
                         f"flow_eq_{device}_{i}_{j}",
                         cplex.SparsePair([flow_rate_var], [1.0]),
                         'E', current_reserved_rate
                     )
 
-                    # Update reservable capacity and remaining capacity
-                    reservable_capacity[edge] += current_reserved_rate
-                    remaining_capacity[edge] = resource_graph[i][j]['bandwidth'] - reservable_capacity[edge]
+
 
             # Output rmin for debugging
-            for edge, min_value in rmin.items():
-                print(f"Minimum reserved flow for edge {edge}: {min_value}")
+            #for edge, min_value in rmin.items():
+                #print(f"Minimum reserved flow for edge {edge}: {min_value}")
 
             # Output cmax for debugging
-            print(f"Maximum flow value in the network: {cmax}")
+            #print(f"Maximum flow value in the network: {cmax}")
 
             # Maximum capacity variable
             c_max_var = 'c_max'
@@ -291,615 +409,434 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                                 rhs=rhs
                             )
 
-             # Add scheduling algorithm specific constraints
-
+            # Add scheduling algorithm specific constraints
             if scheduling_algorithm == 1:
                 for device, path in combination.items():
-                    wcd_expr = []
-                    t_var = f"t_{device}"
-                    add_variable_if_new(t_var, 'C')
+                    # Calculate t = σ / min{rij: (i,j) ∈ p}
+                    t_value = sigma / min(rmin[(i, j)] for i, j in zip(path[:-1], path[1:]))
 
+                    wcd_var = f"wcd_{device}"
+                    add_variable_if_new(wcd_var, 'C')
+
+                    # Initialize WCD with t_value
+                    add_constraint_if_new(
+                        f"wcd_init_{device}",
+                        cplex.SparsePair([wcd_var], [1.0]),
+                        'E',
+                        t_value
+                    )
+
+                    # Constraint: t * rmin ≥ σ
+                    add_constraint_if_new(
+                        f"t_rmin_sigma_{device}",
+                        cplex.SparsePair([f"r_{device}_{path[0]}_{path[1]}"], [t_value]),
+                        'G',
+                        sigma
+                    )
+
+                    # Constraint: t ≥ 0 (implicitly handled by CPLEX for continuous variables)
+
+                    # Initialize WCD as a SparsePair
+                    wcd = cplex.SparsePair(ind=[wcd_var], val=[1.0])
                     for i, j in zip(path[:-1], path[1:]):
                         edge = (i, j)
                         x_var = generate_edge_variable_name(edge)
-                        r_var = f"r_{device}_{i}_{j}"
+                        flow_rate_var = f"r_{device}_{i}_{j}"
                         s_var = f"s_{device}_{i}_{j}"
-                        add_variable_if_new(s_var, 'C')
 
-                        # WCD expression components
-                        wcd_expr.extend([
-                            (s_var, L),
-                            (x_var, L / reservable_capacity[edge] + l_ij + n_i)
-                        ])
+                        add_variable_if_new(s_var, 'C')  # Changed to Continuous
+                        add_variable_if_new(x_var, 'B')
+                        add_variable_if_new(flow_rate_var, 'C')
 
-                        # Constraint: sij rij ≥ xij (linearized)
-                        M = 1e6  # A large constant
-                        y_var = f"y_{device}_{i}_{j}"
-                        add_variable_if_new(y_var, 'B')
-
-                        # sij ≥ xij - M(1-y)
+                        # Ensure x_var is 1 for edges in the path
                         add_constraint_if_new(
-                            f"srp_constraint1_{device}_{i}_{j}",
-                            [[s_var, x_var, y_var], [1.0, -1.0, M]],
-                            'G',
-                            -M
+                            f"x_var_path_{device}_{i}_{j}",
+                            cplex.SparsePair([x_var], [1.0]),
+                            'E',
+                            1.0
                         )
 
-                        # rij ≥ xij - My
+                        # Constraint: sij * rij ≥ xij^2
                         add_constraint_if_new(
-                            f"srp_constraint2_{device}_{i}_{j}",
-                            [[r_var, x_var, y_var], [1.0, -1.0, -M]],
+                            f"srp_nonlinear_constraint_{device}_{i}_{j}",
+                            cplex.SparsePair([s_var, flow_rate_var, x_var], [1.0, 1.0, -2.0]),
                             'G',
                             0
                         )
 
-                    # WCD constraint
-                    add_constraint_if_new(
-                        f"wcd_constraint_{device}",
-                        [[t_var] + [var for var, _ in wcd_expr], [1.0] + [-1.0] * len(wcd_expr)],
-                        'G',
-                        -field_devices_delta[device]
-                    )
-
-                    # Constraint: t * rmin ≥ σ
-                    for i, j in zip(path[:-1], path[1:]):
-                        r_min = f"r_min_{i}_{j}"
-                        add_variable_if_new(r_min, 'C')
+                        # Constraint: sij ≥ 0
                         add_constraint_if_new(
-                            f"t_rmin_constraint_{device}_{i}_{j}",
-                            [[t_var, r_min], [sigma, -1.0]],
-                            'L',
-                            0.0
+                            f"srp_s_nonnegative_{device}_{i}_{j}",
+                            cplex.SparsePair([s_var], [1.0]),
+                            'G',
+                            0
                         )
 
-                # Additional SRP-specific constraints
-                for edge in reservable_capacity:
-                    i, j = edge
-                    r_min = f"r_min_{i}_{j}"
-                    add_variable_if_new(r_min, 'C')
-                    c_var = f"c_{i}_{j}"
-                    add_variable_if_new(c_var, 'C')
+                        # Calculate θij = L * sij + (L/wij + lij + ni) * xij
+                        bandwidth = resource_graph[i][j]['bandwidth']
+                        latency = resource_graph[i][j]['latency']
+                        #theta_ij = (L * s_var) + ((L / bandwidth + latency + n_i) * x_var)
+                        # Create linear expression for θij
+                        theta_ij = cplex.SparsePair(
+                            ind=[s_var, x_var],
+                            val=[L, (L / bandwidth + latency + n_i)]
+                        )
 
-                    # Constraint: c_ij ≥ r_min_ij for all (i,j)
-                    add_constraint_if_new(
-                        f"c_rmin_constraint_{i}_{j}",
-                        [[c_var, r_min], [1.0, -1.0]],
-                        'G',
-                        0.0
-                    )
+                        # Update WCD by combining SparsePairs
+                        wcd = cplex.SparsePair(
+                            ind=wcd.ind + theta_ij.ind,
+                            val=wcd.val + theta_ij.val
+                        )
 
-                    # Constraint: c_ij ≤ reservable_capacity[edge]
+                    # WCD constraint: WCD ≤ δ
                     add_constraint_if_new(
-                        f"c_capacity_constraint_{i}_{j}",
-                        [[c_var], [1.0]],
+                        f"wcd_deadline_{device}",
+                        cplex.SparsePair([wcd_var], [1.0]),
                         'L',
-                        reservable_capacity[edge]
+                        field_devices_delta[device]
                     )
 
-                # Global constraint: sum of all c_ij ≤ total network capacity
-                total_capacity = sum(resource_graph[i][j]['bandwidth'] for i, j in resource_graph.edges())
-                c_vars = [f"c_{i}_{j}" for i, j in reservable_capacity]
-                add_constraint_if_new(
-                    "total_capacity_constraint",
-                    [c_vars, [1.0] * len(c_vars)],
-                    'L',
-                    total_capacity
-                )
 
-                print(wcd_expr)
             # Group-Based (GB) scheduling algorithm
-
             elif scheduling_algorithm == 2:
-
                 for device, path in combination.items():
+                    # Calculate t = σ / min{rij: (i,j) ∈ p}
+                    t_value = sigma / min(rmin[(i, j)] for i, j in zip(path[:-1], path[1:]))
 
-                    wcd_expr = []
+                    wcd_var = f"wcd_{device}"
+                    add_variable_if_new(wcd_var, 'C')
 
-                    t_var = f"t_{device}"
-
-                    add_variable_if_new(t_var, 'C')
-
-                    for i, j in zip(path[:-1], path[1:]):
-                        edge = (i, j)
-
-                        x_var = generate_edge_variable_name(edge)
-
-                        r_var = f"r_{device}_{i}_{j}"
-
-                        s_var = f"s_{device}_{i}_{j}"
-
-                        add_variable_if_new(s_var, 'C')
-
-                        # WCD expression components
-
-                        wcd_expr.extend([
-
-                            (s_var, L),
-
-                            (x_var, L / reservable_capacity[edge] + l_ij + n_i)
-
-                        ])
-
-                        # Constraint: sij rij ≥ xij (linearized)
-
-                        M = 1e6  # A large constant
-
-                        y_var = f"y_{device}_{i}_{j}"
-
-                        add_variable_if_new(y_var, 'B')
-
-                        # sij ≥ xij - M(1-y)
-
-                        add_constraint_if_new(
-
-                            f"gb_constraint1_{device}_{i}_{j}",
-
-                            [[s_var, x_var, y_var], [1.0, -1.0, M]],
-
-                            'G',
-
-                            -M
-
-                        )
-
-                        # rij ≥ xij - My
-
-                        add_constraint_if_new(
-
-                            f"gb_constraint2_{device}_{i}_{j}",
-
-                            [[r_var, x_var, y_var], [1.0, -1.0, -M]],
-
-                            'G',
-
-                            0
-
-                        )
-
-                    # WCD constraint
-
+                    # Initialize WCD with t_value
                     add_constraint_if_new(
-
-                        f"wcd_constraint_{device}",
-
-                        [[t_var] + [var for var, _ in wcd_expr], [1.0] + [-1.0] * len(wcd_expr)],
-
-                        'G',
-
-                        -field_devices_delta[device]
-
+                        f"wcd_init_{device}",
+                        cplex.SparsePair([wcd_var], [1.0]),
+                        'E',
+                        t_value
                     )
 
                     # Constraint: t * rmin ≥ σ
-
-                    for i, j in zip(path[:-1], path[1:]):
-                        r_min = f"r_min_{i}_{j}"
-                        add_variable_if_new(r_min, 'C')
-                        add_constraint_if_new(
-
-                            f"t_rmin_constraint_{device}_{i}_{j}",
-
-                            [[t_var, r_min], [sigma, -1.0]],
-
-                            'L',
-
-                            0.0
-
-                        )
-
-                # Additional GB-specific constraints
-
-                for edge in reservable_capacity:
-
-                    i, j = edge
-
-                    g_var = f"g_{i}_{j}"
-
-                    add_variable_if_new(g_var, 'C')
-
-                    # Constraint: g_ij ≤ reservable_capacity[edge]
-
                     add_constraint_if_new(
-
-                        f"g_capacity_constraint_{i}_{j}",
-
-                        [[g_var], [1.0]],
-
-                        'L',
-
-                        reservable_capacity[edge]
-
+                        f"t_rmin_sigma_{device}",
+                        cplex.SparsePair([f"r_{device}_{path[0]}_{path[1]}"], [t_value]),
+                        'G',
+                        sigma
                     )
 
-                    # Constraint: sum of r_ij for all flows through (i,j) ≤ g_ij
+                    # Initialize WCD as a SparsePair
+                    wcd = cplex.SparsePair(ind=[wcd_var], val=[1.0])
+                    for i, j in zip(path[:-1], path[1:]):
+                        edge = (i, j)
+                        x_var = generate_edge_variable_name(edge)
+                        flow_rate_var = f"r_{device}_{i}_{j}"
+                        s_var = f"s_{device}_{i}_{j}"
 
-                    flow_r_vars = [f"r_{device}_{i}_{j}" for device in combination if
-                                   edge in zip(combination[device][:-1], combination[device][1:])]
+                        add_variable_if_new(s_var, 'C')
+                        add_variable_if_new(x_var, 'B')
+                        add_variable_if_new(flow_rate_var, 'C')
 
-                    if flow_r_vars:
+                        # Ensure x_var is 1 for edges in the path
                         add_constraint_if_new(
-
-                            f"group_rate_constraint_{i}_{j}",
-
-                            [flow_r_vars + [g_var], [1.0] * len(flow_r_vars) + [-1.0]],
-
-                            'L',
-
-                            0.0
-
+                            f"x_var_path_{device}_{i}_{j}",
+                            cplex.SparsePair([x_var], [1.0]),
+                            'E',
+                            1.0
                         )
 
+                        # Constraint: sij * rij ≥ xij^2
+                        add_constraint_if_new(
+                            f"srp_nonlinear_constraint_{device}_{i}_{j}",
+                            cplex.SparsePair([s_var, flow_rate_var, x_var], [1.0, 1.0, -2.0]),
+                            'G',
+                            0
+                        )
 
-            # Weakly Rate-Proportional (WRP) scheduling algorithm
+                        # Constraint: sij ≥ 0
+                        add_constraint_if_new(
+                            f"srp_s_nonnegative_{device}_{i}_{j}",
+                            cplex.SparsePair([s_var], [1.0]),
+                            'G',
+                            0
+                        )
+
+                        # Calculate θij = 6Lsij + (2L/wij + lij + ni) * xij
+                        bandwidth = resource_graph[i][j]['bandwidth']
+                        latency = resource_graph[i][j]['latency']#L/rij
+
+                        # Create linear expression for θij
+                        theta_ij = cplex.SparsePair(
+                            ind=[s_var, x_var],
+                            val=[6 * L, (latency + 2 * L / bandwidth + l_ij + n_i)]
+                        )
+
+                        # Update WCD by combining SparsePairs
+                        wcd = cplex.SparsePair(
+                            ind=wcd.ind + theta_ij.ind,
+                            val=wcd.val + theta_ij.val
+                        )
+
+                    # WCD constraint: WCD ≤ δ
+                    add_constraint_if_new(
+                        f"wcd_deadline_{device}",
+                        cplex.SparsePair(wcd.ind, wcd.val),
+                        'L',
+                        field_devices_delta[device]
+                    )
 
             elif scheduling_algorithm == 3:
-
                 for device, path in combination.items():
+                    # Calculate t = σ / min{rij: (i,j) ∈ p}
+                    t_value = sigma / min(rmin[(i, j)] for i, j in zip(path[:-1], path[1:]))
+                    # intilize delay slack
+                    delay_slack = field_devices_delta[device] - t_value
+                    wcd_var = f"wcd_{device}"
+                    add_variable_if_new(wcd_var, 'C')
 
-                    wcd_expr = []
+                    # Initialize WCD with t_value
+                    add_constraint_if_new(
+                        f"wcd_init_{device}",
+                        cplex.SparsePair([wcd_var], [1.0]),
+                        'E',
+                        t_value
+                    )
 
-                    t_var = f"t_{device}"
+                    # Constraint: t * rmin ≥ σ
+                    add_constraint_if_new(
+                        f"t_rmin_sigma_{device}",
+                        cplex.SparsePair([f"r_{device}_{path[0]}_{path[1]}"], [t_value]),
+                        'G',
+                        sigma
+                    )
 
-                    add_variable_if_new(t_var, 'C')
+                    # Constraint: t ≥ 0 (implicitly handled by CPLEX for continuous variables)
 
+                    # Initialize WCD as a SparsePair
+                    wcd = cplex.SparsePair(ind=[wcd_var], val=[1.0])
                     for i, j in zip(path[:-1], path[1:]):
                         edge = (i, j)
-
                         x_var = generate_edge_variable_name(edge)
-
-                        r_var = f"r_{device}_{i}_{j}"
-
+                        flow_rate_var = f"r_{device}_{i}_{j}"
                         s_var = f"s_{device}_{i}_{j}"
 
-                        add_variable_if_new(s_var, 'C')
+                        add_variable_if_new(s_var, 'C')  # Changed to Continuous
+                        add_variable_if_new(x_var, 'B')
+                        add_variable_if_new(flow_rate_var, 'C')
 
-                        # WCD expression components
-
-                        wcd_expr.extend([
-
-                            (s_var, L),
-
-                            (x_var,
-                             L / reservable_capacity[edge] * flow_number(i, j, field_devices_delta, flow) + l_ij + n_i)
-
-                        ])
-
-                        # Constraint: sij rij ≥ xij (linearized)
-
-                        M = 1e6  # A large constant
-
-                        y_var = f"y_{device}_{i}_{j}"
-
-                        add_variable_if_new(y_var, 'B')
-
-                        # sij ≥ xij - M(1-y)
-
+                        # Ensure x_var is 1 for edges in the path
                         add_constraint_if_new(
-
-                            f"wrp_constraint1_{device}_{i}_{j}",
-
-                            [[s_var, x_var, y_var], [1.0, -1.0, M]],
-
-                            'G',
-
-                            -M
-
+                            f"x_var_path_{device}_{i}_{j}",
+                            cplex.SparsePair([x_var], [1.0]),
+                            'E',
+                            1.0
                         )
 
-                        # rij ≥ xij - My
-
+                        # Constraint: sij * rij ≥ xij^2
                         add_constraint_if_new(
-
-                            f"wrp_constraint2_{device}_{i}_{j}",
-
-                            [[r_var, x_var, y_var], [1.0, -1.0, -M]],
-
+                            f"srp_nonlinear_constraint_{device}_{i}_{j}",
+                            cplex.SparsePair([s_var, flow_rate_var, x_var], [1.0, 1.0, -2.0]),
                             'G',
-
                             0
-
                         )
 
-                    # WCD constraint
-
-                    add_constraint_if_new(
-
-                        f"wcd_constraint_{device}",
-
-                        [[t_var] + [var for var, _ in wcd_expr], [1.0] + [-1.0] * len(wcd_expr)],
-
-                        'G',
-
-                        -field_devices_delta[device]
-
-                    )
-
-                    # Constraint: t = σ / min{rij: (i,j) ∈ p}
-
-                    for i, j in zip(path[:-1], path[1:]):
-                        r_var = f"r_{device}_{i}_{j}"
-
+                        # Constraint: sij ≥ 0
                         add_constraint_if_new(
-
-                            f"t_constraint_{device}_{i}_{j}",
-
-                            [[t_var, r_var], [1.0, -sigma]],
-
+                            f"srp_s_nonnegative_{device}_{i}_{j}",
+                            cplex.SparsePair([s_var], [1.0]),
                             'G',
-
-                            0.0
-
+                            0
                         )
 
-                # Additional WRP-specific constraints
+                        # Calculate |P(i,j)|
+                        paths_using_edge = flow_number(i, j, combination)
 
-                for edge in reservable_capacity:
+                        bandwidth = resource_graph[i][j]['bandwidth']
+                        latency = resource_graph[i][j]['latency']
+                        # Calculate θij = L * sij + (L/rij+ L/wij + lij + ni)|P(i, j) * xij
+                        # Create linear expression for θij
+                        theta_ij = cplex.SparsePair(
+                            ind=[s_var, x_var],
+                            val=[L, (latency + L / bandwidth + l_ij + n_i) * paths_using_edge]
+                        )
 
-                    i, j = edge
+                        # Update WCD by combining SparsePairs
+                        wcd = cplex.SparsePair(
+                            ind=wcd.ind + theta_ij.ind,
+                            val=wcd.val + theta_ij.val
+                        )
 
-                    w_var = f"w_{i}_{j}"
 
-                    add_variable_if_new(w_var, 'C')
+                        # Update delay slack
+                        delay_slack -=  latency + (paths_using_edge - 1) * L / bandwidth + l_ij + n_i
 
-                    # Constraint: w_ij ≤ reservable_capacity[edge]
+                    # WCD constraint: WCD ≤ δ
+                    #add_constraint_if_new(f"wcd_deadline_{device}",cplex.SparsePair(wcd.ind, wcd.val),'L',field_devices_delta[device])
 
-                    add_constraint_if_new(
 
-                        f"w_capacity_constraint_{i}_{j}",
-
-                        [[w_var], [1.0]],
-
-                        'L',
-
-                        reservable_capacity[edge]
-
+                    # Admission control constraint
+                    admission_control_expr = cplex.SparsePair(
+                        ind=[generate_edge_variable_name((i, j)) for i, j in zip(path[:-1], path[1:])],
+                        val=[L / resource_graph[i][j]['bandwidth'] for i, j in zip(path[:-1], path[1:])]
                     )
 
-                    # Constraint: sum of r_ij for all flows through (i,j) ≤ w_ij
-
-                    flow_r_vars = [f"r_{device}_{i}_{j}" for device in combination if
-                                   edge in zip(combination[device][:-1], combination[device][1:])]
-
-                    if flow_r_vars:
-                        add_constraint_if_new(
-
-                            f"wrp_rate_constraint_{i}_{j}",
-
-                            [flow_r_vars + [w_var], [1.0] * len(flow_r_vars) + [-1.0]],
-
-                            'L',
-
-                            0.0
-
-                        )
+                    add_constraint_if_new(
+                        f"admission_control_{device}",
+                        admission_control_expr,
+                        'L',
+                        delay_slack
+                    )
 
 
             # Frame-Based (FB) scheduling algorithm
-
             elif scheduling_algorithm == 4:
-
                 for device, path in combination.items():
+                    # Calculate t = σ / min{rij: (i,j) ∈ p}
+                    t_value = sigma / min(rmin[(i, j)] for i, j in zip(path[:-1], path[1:]))
 
-                    wcd_expr = []
+                    wcd_var = f"wcd_{device}"
+                    add_variable_if_new(wcd_var, 'C')
 
-                    t_var = f"t_{device}"
+                    # Initialize WCD with t_value
+                    add_constraint_if_new(
+                        f"wcd_init_{device}",
+                        cplex.SparsePair([wcd_var], [1.0]),
+                        'E',
+                        t_value
+                    )
 
-                    add_variable_if_new(t_var, 'C')
+                    # Constraint: t * rmin ≥ σ
+                    add_constraint_if_new(
+                        f"t_rmin_sigma_{device}",
+                        cplex.SparsePair([f"r_{device}_{path[0]}_{path[1]}"], [t_value]),
+                        'G',
+                        sigma
+                    )
+
+                    # Initialize WCD as a SparsePair
+                    wcd = cplex.SparsePair(ind=[wcd_var], val=[1.0])
 
                     for i, j in zip(path[:-1], path[1:]):
                         edge = (i, j)
-
                         x_var = generate_edge_variable_name(edge)
-
-                        r_var = f"r_{device}_{i}_{j}"
-
+                        flow_rate_var = f"r_{device}_{i}_{j}"
                         s_var = f"s_{device}_{i}_{j}"
-
                         v_var = f"v_{device}_{i}_{j}"
-
                         z_var = f"z_{device}_{i}_{j}"
 
                         add_variable_if_new(s_var, 'C')
-
+                        add_variable_if_new(x_var, 'B')
+                        add_variable_if_new(flow_rate_var, 'C')
                         add_variable_if_new(v_var, 'C')
-
                         add_variable_if_new(z_var, 'C')
 
-                        # WCD expression components
-
-                        wcd_expr.extend([
-
-                            (s_var, L * L / reservable_capacity[edge] * flow_number(i, j, field_devices_delta, flow)),
-
-                            (x_var, 0),
-
-                            (v_var, 1)
-
-                        ])
-
-                        # Constraints for vij
-
+                        # Ensure x_var is 1 for edges in the path
                         add_constraint_if_new(
+                            f"x_var_path_{device}_{i}_{j}",
+                            cplex.SparsePair([x_var], [1.0]),
+                            'E',
+                            1.0
+                        )
 
+                        bandwidth = resource_graph[i][j]['bandwidth']
+                        latency = resource_graph[i][j]['latency']
+
+                        # Calculate |P(i,j)|
+                        paths_using_edge = flow_number(i, j, combination)
+
+                        # θij = L*sij*L/wij *|P(i, j)|* xij + vij
+                        theta_ij = cplex.SparsePair(
+                            ind=[s_var, x_var, v_var],
+                            val=[L * (L/ latency + L / bandwidth) * paths_using_edge, 1.0, 1.0]
+                        )
+
+                        # vij ≥ L*sij –L/wij
+                        add_constraint_if_new(
                             f"v_constraint1_{device}_{i}_{j}",
-
-                            [[v_var, s_var], [1.0, -1.0]],
-
+                            cplex.SparsePair([v_var, s_var], [1.0, -L]),
                             'G',
-
-                            -L / reservable_capacity[edge]
-
+                            -L / bandwidth
                         )
 
+                        # vij ≥ (L/ rijmin) xij –L*rij /(wij ∗rijmin)
                         add_constraint_if_new(
-
                             f"v_constraint2_{device}_{i}_{j}",
-
-                            [[v_var, x_var, r_var], [1.0, -L / rho, L / (reservable_capacity[edge] * rho)]],
-
+                            cplex.SparsePair([v_var, x_var, flow_rate_var],
+                                             [1.0, -latency,  (bandwidth * rmin[(i, j)])]),
                             'G',
-
-                            0.0
-
-                        )
-
-                        # Constraint: sij rij ≥ xij (linearized)
-
-                        M = 1e6  # A large constant
-
-                        y_var = f"y_{device}_{i}_{j}"
-
-                        add_variable_if_new(y_var, 'B')
-
-                        # sij ≥ xij - M(1-y)
-
-                        add_constraint_if_new(
-
-                            f"fb_constraint1_{device}_{i}_{j}",
-
-                            [[s_var, x_var, y_var], [1.0, -1.0, M]],
-
-                            'G',
-
-                            -M
-
-                        )
-
-                        # rij ≥ xij - My
-
-                        add_constraint_if_new(
-
-                            f"fb_constraint2_{device}_{i}_{j}",
-
-                            [[r_var, x_var, y_var], [1.0, -1.0, -M]],
-
-                            'G',
-
                             0
-
                         )
 
-                        # Constraints for zij
-
+                        # vij ≥ 0
                         add_constraint_if_new(
-
-                            f"z_constraint1_{device}_{i}_{j}",
-
-                            [[z_var], [1.0]],
-
+                            f"v_nonnegative_{device}_{i}_{j}",
+                            cplex.SparsePair([v_var], [1.0]),
                             'G',
-
-                            1 / rho
-
+                            0
                         )
 
+                        # sij rij ≥ xij^2
                         add_constraint_if_new(
-
-                            f"z_constraint2_{device}_{i}_{j}",
-
-                            [[z_var, s_var], [1.0, -1.0]],
-
+                            f"srp_nonlinear_constraint_{device}_{i}_{j}",
+                            cplex.SparsePair([s_var, flow_rate_var, x_var], [1.0, 1.0, -2.0]),
                             'G',
-
-                            0.0
-
+                            0
                         )
 
-                    # WCD constraint
-
-                    add_constraint_if_new(
-
-                        f"wcd_constraint_{device}",
-
-                        [[t_var] + [var for var, _ in wcd_expr], [1.0] + [-1.0] * len(wcd_expr)],
-
-                        'G',
-
-                        -field_devices_delta[device]
-
-                    )
-
-                    # Constraint: t = σ / min{rij: (i,j) ∈ p}
-
-                    for i, j in zip(path[:-1], path[1:]):
-                        r_var = f"r_{device}_{i}_{j}"
-
+                        # sij ≥ 0
                         add_constraint_if_new(
-
-                            f"t_constraint_{device}_{i}_{j}",
-
-                            [[t_var, r_var], [1.0, -sigma]],
-
+                            f"srp_s_nonnegative_{device}_{i}_{j}",
+                            cplex.SparsePair([s_var], [1.0]),
                             'G',
-
-                            0.0
-
+                            0
                         )
+
+                        # Update WCD by combining SparsePairs
+                        wcd = cplex.SparsePair(
+                            ind=wcd.ind + theta_ij.ind + [f"l_{i}_{j}", f"n_{i}"],
+                            val=wcd.val + theta_ij.val + [1.0, 1.0]
+                        )
+
+                    # WCD constraint: WCD ≤ δ
+                    # WCD constraint: WCD ≤ δ
+                    #print(device)
+                    #add_constraint_if_new(f"wcd_deadline_{device}",cplex.SparsePair(wcd.ind, wcd.val),'L',field_devices_delta[device])
 
                     # Admission control constraint
-
-                    admission_expr = []
-
+                    admission_control_expr = cplex.SparsePair([], [])
                     for i, j in zip(path[:-1], path[1:]):
+                        bandwidth = resource_graph[i][j]['bandwidth']
                         x_var = generate_edge_variable_name((i, j))
-
                         z_var = f"z_{device}_{i}_{j}"
+                        flow_rate_var = f"r_{device}_{i}_{j}"
 
-                        admission_expr.extend([x_var, z_var])
+                        admission_control_expr.ind.extend([x_var, z_var])
+                        admission_control_expr.val.extend([L / bandwidth, L * (1 - 1 / rmin[(i, j)])])
 
-                    add_constraint_if_new(
-
-                        f"admission_constraint_{device}",
-
-                        [admission_expr, [L / reservable_capacity[(i, j)] for i, j in zip(path[:-1], path[1:])] +
-
-                         [L - L * rho / reservable_capacity[(i, j)] for i, j in zip(path[:-1], path[1:])]],
-
-                        'L',
-
-                        field_devices_delta[device] - (
-
-                                sigma / min([reservable_capacity[edge] for edge in zip(path[:-1], path[1:])]))
-
-                    )
-
-                # Additional FB-specific constraints
-
-                for edge in reservable_capacity:
-
-                    i, j = edge
-
-                    f_var = f"f_{i}_{j}"
-
-                    add_variable_if_new(f_var, 'C')
-
-                    # Constraint: f_ij ≤ reservable_capacity[edge]
-
-                    add_constraint_if_new(
-
-                        f"f_capacity_constraint_{i}_{j}",
-
-                        [[f_var], [1.0]],
-
-                        'L',
-
-                        reservable_capacity[edge]
-
-                    )
-                    # Constraint: sum of r_ij for all flows through (i,j) ≤ f_ij
-                    flow_r_vars = [f"r_{device}_{i}_{j}" for device in combination if
-                                   edge in zip(combination[device][:-1], combination[device][1:])]
-                    if flow_r_vars:
+                        # zij ≥ 1 /rijmin
                         add_constraint_if_new(
-                            f"fb_rate_constraint_{i}_{j}",
-                            [flow_r_vars + [f_var], [1.0] * len(flow_r_vars) + [-1.0]],
-                            'L',
-                            0.0
+                            f"z_constraint1_{device}_{i}_{j}",
+                            cplex.SparsePair([z_var], [1.0]),
+                            'G',
+                            1 / rmin[(i, j)]
                         )
+
+                        # zij ≥ sij
+                        add_constraint_if_new(
+                            f"z_constraint2_{device}_{i}_{j}",
+                            cplex.SparsePair([z_var, f"s_{device}_{i}_{j}"], [1.0, -1.0]),
+                            'G',
+                            0
+                        )
+
+                    add_constraint_if_new(
+                        f"admission_control_{device}",
+                        admission_control_expr,
+                        'L',
+                        field_devices_delta[device]
+                    )
+
+
             # Set objective function
             prob.objective.set_linear([(c_max_var, 1.0)])
             prob.objective.set_sense(prob.objective.sense.minimize)
-
             # Solve the problem
             prob.solve()
 
@@ -908,9 +845,66 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                 valid_solutions.append((combination, prob.solution.get_objective_value()))
                 valid_solution_count += 1
 
+                for device, path in combination.items():
+                    wcd_var = f"wcd_{device}"
+                    calculated_wcd = prob.solution.get_values(wcd_var)
+                    deadline = field_devices_delta[device]
+
+                    print(f"Device: {device}")
+                    print(f"Calculated WCD: {calculated_wcd}")
+                    print(f"Deadline (field_devices_delta): {deadline}")
+                    print(f"Path: {path}")
+
+                    total_wcd = 0
+                    for i, j in zip(path[:-1], path[1:]):
+                        edge = (i, j)
+                        bandwidth = resource_graph[i][j]['bandwidth']
+                        latency = resource_graph[i][j]['latency']
+                        L = 1500  # Make sure this matches your packet size
+                        n_i = 40 / 1000  # Node processing delay, ensure this matches your definition
+
+                        # Get the flow rate for this edge and device
+                        flow_rate_var = f"r_{device}_{i}_{j}"
+                        flow_rate = prob.solution.get_values(flow_rate_var)
+
+                        # Get the s variable for this edge and device
+                        s_var = f"s_{device}_{i}_{j}"
+                        s_value = prob.solution.get_values(s_var)
+
+                        # Calculate edge delay based on scheduling algorithm
+                        if scheduling_algorithm == 1:  # Strictly Rate-Proportional (SRP)
+                            edge_delay = L * s_value + (L / bandwidth + latency + n_i)
+                        elif scheduling_algorithm == 2:  # Group-Based (GB)
+                            edge_delay = 6 * L * s_value + (2 * L / bandwidth + latency + n_i)
+                        elif scheduling_algorithm == 3:  # Weakly Rate-Proportional (WRP)
+                            paths_using_edge = flow_number(i, j, combination)
+                            edge_delay = L * s_value + (
+                                        L / flow_rate + L / bandwidth + latency + n_i) * paths_using_edge
+                        elif scheduling_algorithm == 4:  # Frame-Based (FB)
+                            v_var = f"v_{device}_{i}_{j}"
+                            v_value = prob.solution.get_values(v_var)
+                            paths_using_edge = flow_number(i, j, combination)
+                            edge_delay = L * s_value * (
+                                        L / latency + L / bandwidth) * paths_using_edge + v_value + latency + n_i
+                        else:
+                            raise ValueError("Invalid scheduling algorithm")
+
+                        total_wcd += edge_delay
+
+                        print(f"Edge {i}-{j}:")
+                        print(f"  Flow rate: {flow_rate}")
+                        print(f"  s value: {s_value}")
+                        print(f"  Edge delay: {edge_delay}")
+
+                    print(f"Total calculated WCD: {total_wcd}")
+                    print(f"Difference from CPLEX WCD: {abs(total_wcd - calculated_wcd)}")
+                    print("--------------------")
+
         print(f"Total valid solutions found: {valid_solution_count}")
+        print(wcd_values)
         #for solution in valid_solutions:
             #print(f"Combination: {solution[0]} - Objective Value: {solution[1]}")
+
 
     except CplexError as e:
         print(f"CplexError: {e}")
@@ -942,9 +936,16 @@ if __name__ == "__main__":
     # Get scheduling algorithm from user
     scheduling_algorithm = define_scheduling_algorithm()
 
+    # get the start time
+    st = time.time()
     # Solve the optimal path problem
     solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_algorithm)
+    # get the end time
+    et = time.time()
 
+    # get the execution time
+    elapsed_time = et - st
+    print('Execution time:', elapsed_time, 'seconds')
 '''''''''
 
 def plot_subgraphs(combinations, resource_graph, num_plots=10):
