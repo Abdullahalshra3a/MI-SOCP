@@ -1,5 +1,3 @@
-
-
 import cplex
 from cplex.exceptions import CplexError
 from FindPaths import sorted_paths
