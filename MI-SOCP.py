@@ -1,3 +1,5 @@
+
+
 import cplex
 from cplex.exceptions import CplexError
 from FindPaths import sorted_paths
@@ -204,16 +206,21 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
     # Get all combinations
     #all_combinations = list(combinations_generator)
 
-    all_combinations = list(itertools.islice(combinations_generator, 10))
+    all_combinations = list(itertools.islice(combinations_generator, 1000))
     random.shuffle(all_combinations)
-    first_100_combinations = all_combinations[:100]
+    Random_1000_combinations = all_combinations[:1000]
 
     valid_solutions = []
     valid_solution_count = 0
     wcd_values = {}
+    # Initialize the reservation_costs dictionary
+    reservation_costs = {}
+
+    # Initialize the variables dictionary
+    variables = {}
 
     # Iterate through the first 100 combinations
-    for combination in first_100_combinations:
+    for combination in Random_1000_combinations:
 
         prob = cplex.Cplex()
         prob.set_problem_type(prob.problem_type.MIQCP)
@@ -244,10 +251,10 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
             for i, j in zip(path[:-1], path[1:]):
                 edge = (i, j)
                 var_x = f'x_{flow_name}_{i}_{j}'  # JF: I think the edge variables have to be defined per flows. Otherwise it is not possible to construct the flows conservation constraint
-                if (i,j) not in flows_over_edge:
-                    flows_over_edge[(i,j)] = []
+                if (i, j) not in flows_over_edge:
+                    flows_over_edge[(i, j)] = []
 
-                flows_over_edge[(i,j)].append(flow_name)
+                flows_over_edge[(i, j)].append(flow_name)
 
                 var_flow_rate = f"r_{flow_name}_{i}_{j}"
                 var_edge_capacity = f"c_{i}_{j}"
@@ -272,6 +279,10 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                 # Update reservable capacity and remaining capacity
                 reservable_capacity[edge] += current_reserved_rate
                 remaining_capacity[edge] = resource_graph[i][j]['bandwidth'] - reservable_capacity[edge]
+
+                reservation_costs[edge] = reservable_capacity[edge]
+                variables[edge] =  var_edge_capacity
+
 
             # Store the minimum value for the entire path
             flows[flow_name]['path_min_value'] = path_min_value
@@ -426,8 +437,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                 #add_constraint_13(flow_name, path, sigma)
                 #add_constraint_15(flow_name, path)
                 #add_constraint_16(flow_name, path)
-                var_wcd = f"wcd_{flow_name}"
-                add_variable_if_new(var_wcd, 'C')
+
                 var_t = f"t_{flow_name}"
                 add_variable_if_new( var_t, 'C')
                 var_r_min = f'rmin_{flow_name}_{i}_{j}'
@@ -538,8 +548,6 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                 # add_constraint_13(flow_name, path, sigma)
                 # add_constraint_15(flow_name, path)
                 # add_constraint_16(flow_name, path)
-                var_wcd = f"wcd_{flow_name}"
-                add_variable_if_new(var_wcd, 'C')
                 var_t = f"t_{flow_name}"
                 add_variable_if_new(var_t, 'C')
                 var_r_min = f'rmin_{flow_name}_{i}_{j}'
@@ -644,8 +652,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                 # add_constraint_13(flow_name, path, sigma)
                 # add_constraint_15(flow_name, path)
                 # add_constraint_16(flow_name, path)
-                var_wcd = f"wcd_{flow_name}"
-                add_variable_if_new(var_wcd, 'C')
+
                 var_t = f"t_{flow_name}"
                 add_variable_if_new(var_t, 'C')
                 var_r_min = f'rmin_{flow_name}_{i}_{j}'
@@ -768,8 +775,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
         # Frame-Based (FB) scheduling algorithm
         elif scheduling_algorithm == 4:
             for flow_name, path in combination.items():
-                var_wcd = f"wcd_{flow_name}"
-                add_variable_if_new(var_wcd, 'C')
+
                 var_t = f"t_{flow_name}"
                 add_variable_if_new(var_t, 'C')
                 var_r_min = f'rmin_{flow_name}'
@@ -813,7 +819,6 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
 
                     w_ij = resource_graph[i][j]['bandwidth']
                     l_ij = resource_graph[i][j]['latency']
-                    #n_i = n_i_values[i]  # Assuming n_i_values is a dictionary with node processing times
                     p_ij = len(flows_over_edge[(i, j)])
 
                     # θij = L*sij*L/wij *|P(i, j)|* xij + vij
@@ -887,7 +892,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                     var_flow_rate = f"r_{flow_name}_{i}_{j}"
                     w_ij = resource_graph[i][j]['bandwidth']
 
-                    # zij ≥ 1 /rijmin
+                    # zij ≥ 1 /rijmin (24.1)
                     add_constraint_if_new(
                         name=f"z_constraint1_{flow_name}_{i}_{j}",
                         lin_expr=cplex.SparsePair([var_z], [1.0]),
@@ -895,7 +900,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                         rhs=1 / rmin[(i, j)]
                     )
 
-                    # zij ≥ sij
+                    # zij ≥ sij (24.2)
                     add_constraint_if_new(
                         name=f"z_constraint2_{flow_name}_{i}_{j}",
                         lin_expr=cplex.SparsePair([var_z, f"s_{flow_name}_{i}_{j}"], [1.0, -1.0]),
@@ -913,7 +918,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                     admission_control_expr.val.append(L - flows[flow_name]['reserved_rates'])
 
 
-
+                #Equ (23)
                 add_constraint_if_new(
                     name=f"admission_control_{flow_name}",
                     lin_expr=admission_control_expr,
@@ -922,10 +927,13 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                 )
 
 
-
-        # Set objective function
-        prob.objective.set_linear([(var_c_max, 1.0)])
+        # construct the objective_terms list using the reservation_costs and variables
+        objective_terms = [(variables[edge], reservation_costs[edge]) for edge in variables]
+        #print(objective_terms)
+        # Set the linear objective function in CPLEX using the constructed objective_terms
+        prob.objective.set_linear(objective_terms)
         prob.objective.set_sense(prob.objective.sense.minimize)
+
         # Solve the problem
         prob.solve()
 
@@ -935,8 +943,6 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
             valid_solution_count += 1
 
             for flow_name, path in combination.items():
-                var_wcd = f"wcd_deadline_{flow_name}"
-                #calculated_wcd = prob.solution.get_values(var_wcd)
                 deadline = field_devices_delta[flow_name]
 
                 print(f"Device: {flow_name}")
