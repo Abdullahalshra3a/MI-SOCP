@@ -1,5 +1,3 @@
-
-
 import cplex
 from cplex.exceptions import CplexError
 from FindPaths import sorted_paths
@@ -44,6 +42,48 @@ scheduling_algorithms_types = {
 # Global variables
 P = {}  # Dictionary to store flow numbers
 
+
+def group_flows_by_service_type(wcd_results, field_devices, flows):
+    # Initialize a dictionary to hold the grouped flows by service type
+    grouped_flows = {}
+
+    # Loop over all flows and process each one
+    for flow_name, flow_data in wcd_results.items():
+        # Extract the service type from field_devices
+        service_type = field_devices[flow_name]['service_type']
+
+        # Extract the path and server (last node in the path)
+        path = flow_data['Path']
+        server = path[-1]
+
+        # Bitrate factor, WCD value, and deadline for this flow
+        bitrate_factor = flows[flow_name]['reserved_rates']
+        wcd_value = flow_data['wcd_value']
+        deadline = flow_data['deadline']
+
+        # If this service type is not yet in the grouped_flows, initialize it
+        if service_type not in grouped_flows:
+            grouped_flows[service_type] = {
+                'service_type': service_type,
+                'multipaths': [],
+                'server': server,  # Assuming all paths under this service_type use the same server
+                'bitrate_factor': 0,
+                'deadline': 0  # Will store the maximum deadline
+            }
+
+        # Append the path to multipaths for the current service_type
+        grouped_flows[service_type]['multipaths'].append(tuple(path))  # Store paths as tuples
+
+        # Sum up the bitrate factor
+        grouped_flows[service_type]['bitrate_factor'] = bitrate_factor
+
+        # Store the latest wcd_value (can change to any specific logic if needed)
+        #grouped_flows[service_type]['wcd_value'] = wcd_value
+
+        # Update the deadline to be the maximum deadline across flows
+        grouped_flows[service_type]['deadline'] = max(grouped_flows[service_type]['deadline'], deadline)
+
+    return grouped_flows
 def define_scheduling_algorithm():
     """Prompt user to select a scheduling algorithm"""
     for i, algorithm in scheduling_algorithms_types.items():
@@ -105,6 +145,7 @@ def generate_path_combinations(flow, max_combinations=100000, max_paths_per_devi
 
         print(f"Generated {len(seen_combinations)} unique combinations")
 
+
     # Sort the sampled combinations by total path length
     sampled_combinations = sorted(sample_combinations(), key=lambda x: sum(len(path) for path in x.values()))
 
@@ -136,20 +177,6 @@ def analyze_edge_usage(combinations):
     return sorted_edges
 
 
-def pretty_print_constraint(name, sparse_pair:cplex.SparsePair, sense:str, rhs:float, sparse_triple:cplex.SparseTriple = None)-> str:
-    multiplications = []
-    if sparse_pair is not None:
-        multiplications.extend([f'({val}*{ind})' for (ind, val) in zip(sparse_pair.ind, sparse_pair.val)])
-
-    if sparse_triple is not None:
-        multiplications.extend([f'({val}*{ind1}*{ind2})' for (ind1, ind2, val) in zip(sparse_triple.ind1, sparse_triple.ind2, sparse_triple.val)])
-
-    lhs = ' + '.join(multiplications)
-    senses = {
-        'L': '<=', 'G': '>=', 'E': '=='
-    }
-    return f'{name:20}: {lhs} {senses[sense]} {rhs}'
-
 
 
 def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_algorithm=1, sigma=255, rho=255):
@@ -178,7 +205,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                     rhs=[rhs],
                     names=[name]
                 )
-                print(pretty_print_constraint(name, lin_expr, sense, rhs))
+
             else:
                 prob.quadratic_constraints.add(
                     lin_expr=lin_expr,
@@ -187,12 +214,12 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                     rhs=rhs,
                     name=name
                 )
-                print(pretty_print_constraint(name, lin_expr, sense, rhs, quad_expr))
+
 
             added_constraints[name] = [lin_expr, quad_expr, sense, rhs]
         else:
             pass
-            print(f'The constraint {name} has already been added!')
+            #print(f'The constraint {name} has already been added!')
             #print(added_constraints[name])
 
     # Constants
@@ -219,9 +246,9 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
     # Get all combinations
     #all_combinations = list(combinations_generator)
 
-    all_combinations = list(itertools.islice(combinations_generator, 1000))
+    all_combinations = list(itertools.islice(combinations_generator, 10000))
     random.shuffle(all_combinations)
-    Random_1000_combinations = all_combinations[:1000]
+    Random_1000_combinations = all_combinations[:10000]
 
     valid_solutions = []
     valid_solution_count = 0
@@ -331,9 +358,8 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                 name=f"flow_eq_{flow_name}_{i}_{j}",
                 lin_expr=cplex.SparsePair([var_flow_rate], [1.0]),
                 sense='E',
-                rhs=flows[device]['reserved_rates']
+                rhs=flows[flow_name]['reserved_rates']
             )
-
 
         # Output rmin for debugging
         #for edge, min_value in rmin.items():
@@ -344,7 +370,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
 
         # Equ. (11) c_max
         # Maximum capacity variable
-        print('\nAdding constraint for c_max')
+        #print('\nAdding constraint for c_max')
         var_c_max = 'c_max'
         add_variable_if_new(var_c_max, 'C')
         add_constraint_if_new(
@@ -355,7 +381,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
         )
 
         def add_constraint_9(flow_paths, flows_over_edge):
-            print('\nAdding constraints for flow conservation:')
+            #print('\nAdding constraints for flow conservation:')
             used_nodes = []
             for path in flow_paths:
                 used_nodes.extend(path)
@@ -392,7 +418,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
         add_constraint_9(combination.values(), flows_over_edge)
 
         def add_constraint_10_and_11(flow_name, path, reservable_capacity):
-            print(f'\nAdding constraints 10 and 11 for flow {flow_name}:')
+            #print(f'\nAdding constraints 10 and 11 for flow {flow_name}:')
             for i,j in reservable_capacity:
                 if (i, j) in zip(path[:-1], path[1:]):
                     var_flow_rate = f"r_{flow_name}_{i}_{j}"
@@ -481,7 +507,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                 # Equ. (13.2): t >= 0 is already implicitly ensured by cplex
                 # add_variable_if_new(var_r_min, 'C')
                 # Equ. (13.1): t*r_min >= sigma
-                print(f'\nAdding constraint 13 for flow {flow_name} for edge ({i}, {j}):')
+                #print(f'\nAdding constraint 13 for flow {flow_name} for edge ({i}, {j}):')
                 add_constraint_if_new(
                     name=f"t_rmin_sigma_{flow_name}_{i}_{j}",
                     quad_expr=cplex.SparseTriple(ind1=[var_t], ind2=[var_r_min], val=[1.0]),
@@ -591,7 +617,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                 # Equ. (13.2): t >= 0 is already implicitly ensured by cplex
                 # add_variable_if_new(var_r_min, 'C')
                 # Equ. (13.1): t*r_min >= sigma
-                print(f'\nAdding constraint 13 for flow {flow_name} for edge ({i}, {j}):')
+                #print(f'\nAdding constraint 13 for flow {flow_name} for edge ({i}, {j}):')
                 add_constraint_if_new(
                     name=f"t_rmin_sigma_{flow_name}_{i}_{j}",
                     quad_expr=cplex.SparseTriple(ind1=[var_t], ind2=[var_r_min], val=[1.0]),
@@ -696,7 +722,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                 # Equ. (13.2): t >= 0 is already implicitly ensured by cplex
                 # add_variable_if_new(var_r_min, 'C')
                 # Equ. (13.1): t*r_min >= sigma
-                print(f'\nAdding constraint 13 for flow {flow_name} for edge ({i}, {j}):')
+                #print(f'\nAdding constraint 13 for flow {flow_name} for edge ({i}, {j}):')
                 add_constraint_if_new(
                     name=f"t_rmin_sigma_{flow_name}_{i}_{j}",
                     quad_expr=cplex.SparseTriple(ind1=[var_t], ind2=[var_r_min], val=[1.0]),
@@ -955,16 +981,9 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
             valid_solutions.append((combination, prob.solution.get_objective_value()))
             valid_solution_count += 1
 
-            for flow_name, path in combination.items():
-                deadline = field_devices_delta[flow_name]
 
-                print(f"Device: {flow_name}")
-                #print(f"Calculated WCD: {calculated_wcd}")
-                print(f"Deadline (field_devices_delta): {deadline}")
-                print(f"Path: {path}")
-
-                # Calculate edge delay based on scheduling algorithm
-                if scheduling_algorithm == 1:  # Strictly Rate-Proportional (SRP)
+            # Calculate edge delay based on scheduling algorithm
+            if scheduling_algorithm == 1:  # Strictly Rate-Proportional (SRP)
                     # Dictionary to store WCD values and deadlines for each flow
                     wcd_results = {}
 
@@ -1004,11 +1023,10 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                             'wcd_value': wcd_value,
                             'deadline': deadline
                         }
-
                         # Print the results for debugging
                         print(f"\nComputed WCD value for flow {flow_name}: {wcd_value}")
                         print(f"Field device deadline (delta): {deadline}")
-                elif scheduling_algorithm == 2:  # Group-Based (GB)
+            elif scheduling_algorithm == 2:  # Group-Based (GB)
                     # Dictionary to store WCD values and deadlines for each flow
                     wcd_results = {}
 
@@ -1044,7 +1062,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                         wcd_results[flow_name] = {
                             'service_type': field_devices[flow_name]['service_type'],
                             'Path': path,
-                            'bitrate_factor': flow[flow_name]['reserved_rates'],
+                            'bitrate_factor': flows[flow_name]['reserved_rates'],
                             'wcd_value': wcd_value,
                             'deadline': deadline
                         }
@@ -1052,7 +1070,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                         # Print the results for debugging
                         print(f"\nComputed WCD value for flow {flow_name}: {wcd_value}")
                         print(f"Field device deadline (delta): {deadline}")
-                elif scheduling_algorithm == 3:  # Weakly Rate-Proportional (WRP)
+            elif scheduling_algorithm == 3:  # Weakly Rate-Proportional (WRP)
                     # Dictionary to store WCD values and deadlines for each flow
                     wcd_results = {}
 
@@ -1088,14 +1106,14 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                         wcd_results[flow_name] = {
                             'service_type': field_devices[flow_name]['service_type'],
                             'Path': path,
-                            'bitrate_factor': flow[flow_name]['reserved_rates'],
+                            'bitrate_factor': flows[flow_name]['reserved_rates'],
                             'wcd_value': wcd_value,
                             'deadline': deadline
                         }
                         # Print the results for debugging
                         print(f"\nComputed WCD value for flow {flow_name}: {wcd_value}")
                         print(f"Field device deadline (delta): {deadline}")
-                elif scheduling_algorithm == 4:  # Frame-Based (FB)
+            elif scheduling_algorithm == 4:  # Frame-Based (FB)
                     # Dictionary to store WCD values and deadlines for each flow
                     wcd_results = {}
 
@@ -1128,11 +1146,11 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                         # Get the deadline (delta) for the current flow
                         deadline = field_devices_delta[flow_name]
 
-                        # Store the WCD value and deadline in the dictionary
+                        # Store the WCD values and deadlines in a dictionary
                         wcd_results[flow_name] = {
                             'service_type': field_devices[flow_name]['service_type'],
                             'Path': path,
-                            'bitrate_factor': flow[flow_name]['reserved_rates'],
+                            'bitrate_factor': flows[flow_name]['reserved_rates'],
                             'wcd_value': wcd_value,
                             'deadline': deadline
                         }
@@ -1142,21 +1160,56 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                         print(f"\nComputed WCD value for flow {flow_name}: {wcd_value}")
                         print(f"Field device deadline (delta): {deadline}")
 
-                else:
-                        raise ValueError("Invalid scheduling algorithm")
+            else:
+                 raise ValueError("Invalid scheduling algorithm")
 
 
-                Run = input('Enter 1 or True if you would like to run the second Phase using Network Calculas')
-                if Run == 1 or True:
-                    eval_result = javNC_validateNetwork(resource_graph, wcd_results, pickle_qos_dict, prio_dict)
-                    dumpNetAndResult(result)
-                    print("Network calculus evaluation finished. Qos is met: " + str(not eval_result))
-                return
+        result = group_flows_by_service_type(wcd_results, field_devices, flows)
+        eval_result = javNC_validateNetwork(resource_graph, result, pickle_qos_dict, prio_dict)
+        if not eval_result:
+           print('Not ACCAPTIBALE: Searching for a new solution')
+           prob.variables.delete()
+           prob.linear_constraints.delete()
+           prob.quadratic_constraints.delete()
+        else:
+            print('eval_result', eval_result)
+            dumpNetAndResult(resource_graph, eval_result)
+            print("Network calculus evaluation finished. Qos is met: " + str(not eval_result))
+            return
 
-    print(f"Total valid solutions found: {valid_solution_count}")
-    print(wcd_values)
+
+    # remove return before uncomment the following lines
+    #print(f"Total valid solutions found: {valid_solution_count}")
+    #print(wcd_values)
     #for solution in valid_solutions:
         #print(f"Combination: {solution[0]} - Objective Value: {solution[1]}")
+
+def dumpNetAndResult(resource_graph, result):
+    """
+    This functions exports a valid MiniZinc solve result + Networkx network as a pickle object, called "net_res.pkl".
+    """
+    import pickle
+    with open('net_res.pkl', 'wb') as outp:
+        pickle.dump(resource_graph, outp, pickle.HIGHEST_PROTOCOL)
+        pickle.dump(result, outp, pickle.HIGHEST_PROTOCOL)
+
+def plot_subgraphs(combinations, resource_graph, num_plots=10):
+    fig, axs = plt.subplots(2, 5, figsize=(20, 8))
+    fig.suptitle("First 10 Path Combinations Subgraphs", fontsize=16)
+
+    for i, (ax, combo) in enumerate(zip(axs.flatten(), combinations)):
+        if i >= num_plots:
+            break
+
+        subgraph = create_subgraph(combo, resource_graph)
+        pos = nx.spring_layout(subgraph)
+        nx.draw(subgraph, pos, ax=ax, with_labels=True, node_color='lightblue',
+                node_size=300, font_size=8, font_weight='bold')
+        ax.set_title(f"Combination {i + 1}", fontsize=10)
+        ax.axis('off')
+
+    plt.tight_layout()
+    plt.show()
 
 
 # Main execution
@@ -1196,24 +1249,3 @@ if __name__ == "__main__":
     # get the execution time
     elapsed_time = et - st
     print('Execution time:', elapsed_time, 'seconds')
-'''''''''
-
-def plot_subgraphs(combinations, resource_graph, num_plots=10):
-    fig, axs = plt.subplots(2, 5, figsize=(20, 8))
-    fig.suptitle("First 10 Path Combinations Subgraphs", fontsize=16)
-
-    for i, (ax, combo) in enumerate(zip(axs.flatten(), combinations)):
-        if i >= num_plots:
-            break
-
-        subgraph = create_subgraph(combo, resource_graph)
-        pos = nx.spring_layout(subgraph)
-        nx.draw(subgraph, pos, ax=ax, with_labels=True, node_color='lightblue',
-                node_size=300, font_size=8, font_weight='bold')
-        ax.set_title(f"Combination {i + 1}", fontsize=10)
-        ax.axis('off')
-
-    plt.tight_layout()
-    plt.show()
-
-'''''''''
