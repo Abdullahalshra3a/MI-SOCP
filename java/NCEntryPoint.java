@@ -9,8 +9,10 @@ import org.networkcalculus.dnc.tandem.TandemAnalysis;
 import org.networkcalculus.dnc.tandem.analyses.TandemMatchingAnalysis;
 import py4j.GatewayServer;
 
-import java.io.File;
 import java.io.FileWriter;
+import java.util.Map;
+import java.util.List;
+import java.io.File;
 import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -31,6 +33,9 @@ public class NCEntryPoint {
     private final ExperimentConfig experimentConfig = new ExperimentConfig();
     private List<SGService> sgServices = new ArrayList<>();
     private ServerGraph serverGraph;
+
+    private static final String LATEX_FILE_NAME = "max_service_delays.tex";
+
 
     public NCEntryPoint() {
     }
@@ -54,8 +59,8 @@ public class NCEntryPoint {
          */
         targetEdgeList = edgeList.stream()
                 .filter(edge -> (edge.getNodes().get(0).equals(currEdge.getNodes().get(1)) ||
-                                 edge.getNodes().get(1).equals(currEdge.getNodes().get(0)))
-                                && !currEdgeNodes.containsAll(edge.getNodes()))
+                        edge.getNodes().get(1).equals(currEdge.getNodes().get(0)))
+                        && !currEdgeNodes.containsAll(edge.getNodes()))
                 .collect(Collectors.toList());
         return targetEdgeList;
     }
@@ -97,54 +102,62 @@ public class NCEntryPoint {
                 serviceCurves.add(Curve.getFactory().createRateLatency(rate, latency));
             }
             case WFQ -> {
-                if (expConfig.usePacketizer) {   // PGPS aka WFQ
-                    // 1 * l_max for waiting to be scheduled + 1 * l_max for packetizer
+                if (expConfig.usePacketizer) {
                     latency = (2 * expConfig.maxPacketSize) / edge.getBitrate();
                 }
-                // From here it is simple GPS, PGPS just accounts for the latency component
-                // GPS just splits the link-rate among the priorities.
-                // Weights according to the experimentConfiguration
-
-                // Calculate the sum of all flow weights for percentage calculation
                 double sumWeights = Arrays.stream(expConfig.flowWeights).sum();
-                // Iterate over every flow priority and define service curve as w_i /Ew * r
                 for (int i = 0; i < noPrios; i++) {
                     rate = (expConfig.flowWeights[i] / sumWeights) * edge.getBitrate();
                     serviceCurves.add(Curve.getFactory().createRateLatency(rate, latency));
                 }
             }
             case DRR -> {
-                // Deficit Round Robin is always packetized
-                // see eq. 3.34
                 int l_max = expConfig.maxPacketSize;
                 int L = l_max * noPrios;
                 double F = Arrays.stream(expConfig.flowQuantils).sum();
                 double C = edge.getBitrate();
                 for (int i = 0; i < noPrios; i++) {
                     int Q_i = expConfig.flowQuantils[i];
-
-                    // added Q_i/Q_i simplification into eq 3.34 for this formulation.
                     latency = ((Q_i * (L - l_max)) + ((F - Q_i) * (Q_i + l_max)) + (Q_i * l_max)) / (Q_i * C);
                     rate = (Q_i / F) * C;
                     serviceCurves.add(Curve.getFactory().createRateLatency(rate, latency));
                 }
             }
             case WRR -> {
-                // Weighted Round Robin is always packetized, there is no unpacketized version!
-                // see Eq. 3.32
                 int l_min = expConfig.minPacketSize;
                 int l_max = expConfig.maxPacketSize;
                 for (int i = 0; i < noPrios; i++) {
                     int w_i = expConfig.flowWeights[i];
                     double q_i = w_i * l_min;
                     double Q_i = (Arrays.stream(expConfig.flowWeights).sum() - w_i) * l_max;
-
                     latency = (Q_i + l_max) / edge.getBitrate();
                     rate = (q_i / (q_i + Q_i)) * edge.getBitrate();
                     serviceCurves.add(Curve.getFactory().createRateLatency(rate, latency));
                 }
             }
+            case SCFQ -> {
+            // Self-Clocked Fair Queueing
+            double virtualTime = 0;  // The virtual time to track system progress
+            double sumWeights = Arrays.stream(expConfig.flowWeights).sum();
+            double bitrate = edge.getBitrate();
+
+            // Iterate over each flow/priority
+            for (int i = 0; i < noPrios; i++) {
+                // Calculate the rate proportional to the weight
+                rate = (expConfig.flowWeights[i] / sumWeights) * bitrate;
+
+                // In SCFQ, we need to adjust the latency based on the virtual time
+                // Assuming packets arrive at different times, we simulate the time the packet would finish being served
+                latency = (1 / rate) + virtualTime; // Adjust based on virtual time and service rate
+
+                // Update virtual time for the next priority
+                virtualTime += (expConfig.flowWeights[i] / bitrate);
+
+                // Add the service curve for this priority
+                serviceCurves.add(Curve.getFactory().createRateLatency(rate, latency));
+            }
         }
+    }
         return serviceCurves;
     }
 
@@ -342,6 +355,68 @@ public class NCEntryPoint {
         }
     }
 
+    @SuppressWarnings("unused")
+    public boolean experimentOneCombination() {
+        boolean delayTorn = true;
+        // Start the timer to measure execution time
+        long startTime = System.nanoTime();  // Use System.currentTimeMillis() if you prefer milliseconds
+
+        // The experimentLog is one List<String> with each entry being a String "," separated containing each experiment
+        List<List<String>> experimentLog = new ArrayList<>();
+
+        // Assign one multiplexing technique (FIFO or ARBITRARY)
+        var multiplexing = AnalysisConfig.Multiplexing.FIFO; // Chosen value, for example FIFO
+        experimentConfig.multiplexing = multiplexing;
+
+        // Assign one network analysis method (TFA, SFA, PMOO, TMA)
+        TandemAnalysis.Analyses anaType = TandemAnalysis.Analyses.TFA; // Chosen value, for example TFA
+        if (multiplexing == AnalysisConfig.Multiplexing.FIFO &&
+                ((anaType == TandemAnalysis.Analyses.PMOO) || (anaType == TandemAnalysis.Analyses.TMA))) {
+            // PMOO & TMA don't support FIFO multiplexing, skip them
+            return delayTorn;
+        }
+        experimentConfig.ncAnalysisType = anaType;
+
+        // Assign one Arrival bounding method (AGGR_PBOO_PER_SERVER, AGGR_PBOO_CONCATENATION, AGGR_PMOO, AGGR_TM, SEGR_PBOO, SEGR_PMOO, SEGR_TM, SINKTREE_AFFINE_MINPLUS, SINKTREE_AFFINE_DIRECT, SINKTREE_AFFINE_HOMO)
+        var arrBoundType = AnalysisConfig.ArrivalBoundMethod.AGGR_PBOO_PER_SERVER; // Chosen value
+        if (arrBoundType == AnalysisConfig.ArrivalBoundMethod.SEGR_TM) {
+            // Skip SEGR_TM as it lets the program crash
+            return delayTorn;
+        }
+        if (multiplexing == AnalysisConfig.Multiplexing.FIFO &&
+                (arrBoundType == AnalysisConfig.ArrivalBoundMethod.AGGR_TM ||
+                        arrBoundType == AnalysisConfig.ArrivalBoundMethod.SEGR_PMOO ||
+                        arrBoundType == AnalysisConfig.ArrivalBoundMethod.AGGR_PMOO)) {
+            return delayTorn;
+        }
+        experimentConfig.arrivalBoundMethod = arrBoundType;
+
+        // Assign one scheduling policy (None, SP, WFQ, DRR, WRR, SCFQ)
+        var schedPol = ExperimentConfig.SchedulingPolicy.SCFQ; // Chosen value, for example WFQ
+        experimentConfig.schedulingPolicy = schedPol;
+
+        // Reset the old server graph, modify the service curves and flow paths according to the used scheduler
+        resetServerGraph();
+
+        // Create the new NC network
+        createNCNetwork();
+
+        // Conduct the experiment with the newly defined configurations
+        List<String> buffer = new ArrayList<>();
+        delayTorn = calculateNCDelays(buffer);
+        experimentLog.add(buffer);
+
+        experimentConfig.insertConfigNamesInFront(experimentLog);
+        exportResultToCSV(experimentLog, "experiments", "experiment");
+
+        // End the timer and calculate the elapsed time
+        long endTime = System.nanoTime();
+        long duration = (endTime - startTime);  // Duration in nanoseconds
+        System.out.println("Experiment finished in " + duration / 1_000_000 + " milliseconds.");
+        System.out.println(delayTorn);
+        return delayTorn;
+    }
+
     /**
      * This function tries every network analysis method, combined with every arrival bounding technique
      * The result will be exported to the newly created folder "experiments" as a CSV file.
@@ -354,7 +429,7 @@ public class NCEntryPoint {
         for (var multiplexing : AnalysisConfig.Multiplexing.values()) {
             experimentConfig.multiplexing = multiplexing;
 
-            // Iterate over every network analysis method
+            // Iterate over every network analysis method// TFA, SFA, PMOO, TMA
             for (TandemAnalysis.Analyses anaType : TandemAnalysis.Analyses.values()) {
                 if (multiplexing == AnalysisConfig.Multiplexing.FIFO &&
                         ((anaType == TandemAnalysis.Analyses.PMOO) || (anaType == TandemAnalysis.Analyses.TMA))) {
@@ -363,7 +438,7 @@ public class NCEntryPoint {
                 }
                 experimentConfig.ncAnalysisType = anaType;
 
-                // Iterate over every Arrival bounding method
+                // Iterate over every Arrival bounding method => AGGR_PBOO_PER_SERVER, AGGR_PBOO_CONCATENATION, AGGR_PMOO, AGGR_TM, SEGR_PBOO, SEGR_PMOO, SEGR_TM, SINKTREE_AFFINE_MINPLUS, SINKTREE_AFFINE_DIRECT, SINKTREE_AFFINE_HOMO
                 for (var arrBoundType : AnalysisConfig.ArrivalBoundMethod.values()) {
                     // SEGR_TM lets the program crash
                     if (arrBoundType == AnalysisConfig.ArrivalBoundMethod.SEGR_TM) {
@@ -372,34 +447,39 @@ public class NCEntryPoint {
                     // These arrival boundings are not available with FIFO
                     if(multiplexing == AnalysisConfig.Multiplexing.FIFO &&
                             (arrBoundType == AnalysisConfig.ArrivalBoundMethod.AGGR_TM ||
-                             arrBoundType == AnalysisConfig.ArrivalBoundMethod.SEGR_PMOO ||
-                             arrBoundType == AnalysisConfig.ArrivalBoundMethod.AGGR_PMOO)) {
+                                    arrBoundType == AnalysisConfig.ArrivalBoundMethod.SEGR_PMOO ||
+                                    arrBoundType == AnalysisConfig.ArrivalBoundMethod.AGGR_PMOO)) {
                         continue;
                     }
                     experimentConfig.arrivalBoundMethod = arrBoundType;
 
                     // Iterate over every scheduling policy
-                    for (var schedPol : ExperimentConfig.SchedulingPolicy.values()) {
-                        experimentConfig.schedulingPolicy = schedPol;
+                    // Assign one scheduling policy (None, SP, WFQ, DRR, WRR, SCFQ)
+                    var schedPol = ExperimentConfig.SchedulingPolicy.SCFQ; // Chosen value, for example WFQ
+                    experimentConfig.schedulingPolicy = schedPol;
 
-                        // Reset the old servergraph, we need to modify the service curves and flow paths
-                        // according to the used scheduler
-                        resetServerGraph();
+                    // Reset the old servergraph, we need to modify the service curves and flow paths
+                    // according to the used scheduler
+                    resetServerGraph();
 
-                        // Create the new NC network
-                        createNCNetwork();
+                    // Create the new NC network
+                    createNCNetwork();
 
-                        // conduct the experiment with the newly defined configurations
-                        List<String> buffer = new ArrayList<>();
-                        calculateNCDelays(buffer);
-                        experimentLog.add(buffer);
+                    // conduct the experiment with the newly defined configurations
+                    List<String> buffer = new ArrayList<>();
+                    calculateNCDelays(buffer);
+                    experimentLog.add(buffer);
                     }
-                }
+
             }
         }
         experimentConfig.insertConfigNamesInFront(experimentLog);
         exportResultToCSV(experimentLog, "experiments", "experiment");
+        closeLatexFile();
+
+
     }
+
 
     private static void exportResultToCSV(List<List<String>> experimentLog, String folderName, String prefix) {
         // Export experimentLog to a file
@@ -573,6 +653,9 @@ public class NCEntryPoint {
      */
     private boolean conductNC_Analysis(Map<String, List<Double>> results, AnalysisConfig analysisConfig, List<SGService> sgServices, ExperimentConfig experimentConfig) {
         boolean delayTorn = false;
+        String configKey = experimentConfig.multiplexing + "-" + experimentConfig.ncAnalysisType + "-" + experimentConfig.arrivalBoundMethod;
+
+        // Loop through all SGServices and analyze delays
         for (SGService sgs : sgServices) {
             double maxDelay = 0;
             System.out.printf("--- Analyzing SGS \"%s\" ---%n", sgs.getName());
@@ -587,40 +670,150 @@ public class NCEntryPoint {
                         case PMOO -> TandemAnalysis.performPmooEnd2End(this.serverGraph, analysisConfig, foi);
                         case TMA -> new TandemMatchingAnalysis(this.serverGraph, analysisConfig);
                     };
-                    // TMA doesn't have the convenience function
                     if (experimentConfig.ncAnalysisType == TandemAnalysis.Analyses.TMA) {
                         ncanalysis.performAnalysis(foi);
                     }
-                    // Get the foi delay
-                    double foi_delay = ncanalysis.getDelayBound().doubleValue(); // delay is in s
 
-                    // Calculate propagation delay (if no propagation delay is desired, configuration value is set to 0)
+                    double foi_delay = ncanalysis.getDelayBound().doubleValue();
                     double prop_delay = experimentConfig.propagationDelay * foi.getPath().numServers();
-                    // Add propagation delay to delay bound
                     foi_delay += prop_delay;
-                    // Print the end-to-end delay bound
-                    System.out.printf("delay bound     : %.2fms %n", foi_delay * 1000);     // Convert s to ms
-//                  System.out.printf("backlog bound   : %.2f %n", sfa.getBacklogBound().doubleValue());
 
-                    flowDelays.add(foi_delay * 1000);   // Convert s to ms
-                    // compute service max flow delay
+                    System.out.printf("delay bound     : %.2fms %n", foi_delay * 1000);
+                    System.out.printf("backlog bound   : %.2f %n", ncanalysis.getBacklogBound().doubleValue());
+
+                    // Update max backlog bound for this configuration and service
+                    updateMaxBacklogBound(configKey, sgs.getName(), ncanalysis.getBacklogBound().doubleValue());
+
+                    flowDelays.add(foi_delay * 1000); // Convert s to ms
                     maxDelay = Math.max(foi_delay, maxDelay);
                 } catch (Exception e) {
-                    // Here we land e.g. when we have PMOO & FIFO!
                     System.out.println(experimentConfig.ncAnalysisType + " analysis failed");
                     e.printStackTrace();
                     flowDelays.add(-1.0);
                 }
             }
             results.put(sgs.getName(), flowDelays);
+
             System.out.printf("Max service delay for %s is %.2fms (deadline: %.2fms) %n", sgs.getName(), maxDelay * 1000, sgs.getDeadline() * 1000);
             if (sgs.getDeadline() < maxDelay) {
                 System.err.printf("Service %s deadline not met (%.2fms/%.2fms) %n", sgs.getName(), maxDelay * 1000, sgs.getDeadline() * 1000);
                 delayTorn = true;
             }
         }
+
+        // After analyzing delays for the current experiment configuration, export the results to LaTeX
+        exportToLatex(results, experimentConfig.multiplexing.toString(), experimentConfig.ncAnalysisType.toString(), experimentConfig.arrivalBoundMethod.toString());
+        // After all configurations have been analyzed
+        exportAllMaxBacklogBoundsToCSV("all_max_backlog_bounds.csv");
         return delayTorn;
     }
+
+
+    private Map<String, StringBuilder> latexTables = new HashMap<>();
+    private Map<String, Map<String, Double>> allMaxBacklogBounds = new HashMap<>();
+
+    private void updateMaxBacklogBound(String configKey, String serviceName, double backlogBound) {
+        allMaxBacklogBounds
+                .computeIfAbsent(configKey, k -> new HashMap<>())
+                .merge(serviceName, backlogBound, Math::max);
+    }
+
+    public void exportAllMaxBacklogBoundsToCSV(String fileName) {
+        try (FileWriter writer = new FileWriter(fileName)) {
+            // Write header
+            writer.write("Configuration,AR,CVC,LM,SE,VPP\n");
+
+            // Write data for each configuration
+            for (Map.Entry<String, Map<String, Double>> entry : allMaxBacklogBounds.entrySet()) {
+                String configKey = entry.getKey();
+                Map<String, Double> bounds = entry.getValue();
+
+                writer.write(configKey);
+                for (String service : Arrays.asList("AR", "CVC", "LM", "SE", "VPP")) {
+                    double maxBacklog = bounds.getOrDefault(service, 0.0);
+                    writer.write(String.format(",%.2f", maxBacklog));
+                }
+                writer.write("\n");
+            }
+        } catch (IOException e) {
+            System.err.println("Error writing to CSV file: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    // Helper function to get the value or return "null" if key or value is missing
+    public String getValueOrNull(Map<String, List<Double>> map, String key) {
+        return (map.containsKey(key) && !map.get(key).isEmpty()) ? String.format("%.2f", map.get(key).get(0)) : "null";
+    }
+
+
+
+    private boolean isLatexFileInitialized = false;
+    private String combinedFileName = "combined_experiment_results.tex";
+
+    public void exportToLatex(Map<String, List<Double>> results, String multiplexing, String ncAnalysisType, String arrivalBoundMethod) {
+        try (FileWriter writer = new FileWriter(combinedFileName, true)) {  // Open file in append mode
+
+            // Write the LaTeX document header only once
+            if (!isLatexFileInitialized) {
+                writer.write("\\documentclass{article}\n");
+                writer.write("\\usepackage{booktabs}\n");  // For better looking tables
+                writer.write("\\begin{document}\n");
+                isLatexFileInitialized = true;
+            }
+
+            // Write results for the current experiment configuration
+            writer.write("\\section*{NC Analysis Results}\n");
+            writer.write("Multiplexing: " + multiplexing + " \\\\\n");
+            writer.write("Network Analysis Method: " + ncAnalysisType + " \\\\\n");
+            writer.write("Arrival Bounding Method: " + arrivalBoundMethod + " \\\\\n");
+            writer.write("\\vspace{10pt}\n");
+
+            writer.write("\\begin{table}[htbp]\n");
+            writer.write("\\centering\n");
+            writer.write("\\begin{tabular}{l c c}\n");
+            writer.write("\\toprule\n");
+            writer.write("Service Name & Flow Delays (ms) & Max Delay (ms) \\\\\n");
+            writer.write("\\midrule\n");
+
+            // Write results for each service
+            for (Map.Entry<String, List<Double>> entry : results.entrySet()) {
+                String serviceName = entry.getKey();
+                List<Double> delays = entry.getValue();
+                double maxDelay = delays.stream().mapToDouble(Double::doubleValue).max().orElse(-1);
+                String flowDelays = delays.stream()
+                        .map(d -> String.format("%.2f", d))
+                        .reduce((d1, d2) -> d1 + ", " + d2)
+                        .orElse("N/A");
+
+                writer.write(serviceName + " & " + flowDelays + " & " + String.format("%.2f", maxDelay) + " \\\\\n");
+            }
+
+            writer.write("\\bottomrule\n");
+            writer.write("\\end{tabular}\n");
+            writer.write("\\caption{Experiment results for Multiplexing: " + multiplexing + ", Analysis: " + ncAnalysisType + ", Arrival Bound: " + arrivalBoundMethod + "}\n");
+            writer.write("\\end{table}\n");
+
+            System.out.println("Results appended to " + combinedFileName);
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    // Call this method at the end of all experiments to close the LaTeX document
+    public void closeLatexFile() {
+        try (FileWriter writer = new FileWriter(combinedFileName, true)) {
+            writer.write("\\end{document}\n");
+            System.out.println("LaTeX document closed.");
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+
+
+
 
     /**
      * Function used to remove all Flows from the current ServerGraph and
