@@ -252,16 +252,16 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
 
     valid_solutions = []
     valid_solution_count = 0
-    wcd_values = {}
-    # Initialize the reservation_costs dictionary
-    reservation_costs = {}
+    #wcd_values = {}
 
-    # Initialize the variables dictionary
-    variables = {}
 
     # Iterate through the first 100 combinations
     for combination in Random_1000_combinations:
+        # Initialize the reservation_costs dictionary
+        reservation_costs = {}
 
+        # Initialize the variables dictionary
+        variables = {}
         prob = cplex.Cplex()
         prob.set_problem_type(prob.problem_type.MIQCP)
         added_variables = {}
@@ -324,10 +324,11 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
                 variables[edge] =  var_edge_capacity
 
 
+
             # Store the minimum value for the entire path
             flows[flow_name]['path_min_value'] = path_min_value
 
-            # JF: This part is not yet clear? Why is the edge_capacity a variable?
+
             # The edge capacity = the edge bandwidth (wij)
             add_constraint_if_new(
                 name=f"cap_{i}_{j}",
@@ -968,7 +969,7 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
 
         # construct the objective_terms list using the reservation_costs and variables
         objective_terms = [(variables[edge], reservation_costs[edge]) for edge in variables]
-        #print(objective_terms)
+        #print(prob.variables.get_names())
         # Set the linear objective function in CPLEX using the constructed objective_terms
         prob.objective.set_linear(objective_terms)
         prob.objective.set_sense(prob.objective.sense.minimize)
@@ -1163,18 +1164,26 @@ def solve_optimal_path(resource_graph, paths, field_devices_delta, scheduling_al
             else:
                  raise ValueError("Invalid scheduling algorithm")
 
+        # Get the maximum wcd_value for each service type
+        max_wcd_by_service = {}
 
+        for flow_data in wcd_results.values():
+            service_type = flow_data['service_type']
+            wcd_value = flow_data['wcd_value']
+
+            if service_type not in max_wcd_by_service or wcd_value > max_wcd_by_service[service_type]:
+                max_wcd_by_service[service_type] = wcd_value
+
+        print(max_wcd_by_service)
         result = group_flows_by_service_type(wcd_results, field_devices, flows)
         eval_result = javNC_validateNetwork(resource_graph, result, pickle_qos_dict, prio_dict)
         if not eval_result:
-           print('Not ACCAPTIBALE: Searching for a new solution')
-           prob.variables.delete()
-           prob.linear_constraints.delete()
-           prob.quadratic_constraints.delete()
-        else:
             print('eval_result', eval_result)
             dumpNetAndResult(resource_graph, eval_result)
             print("Network calculus evaluation finished. Qos is met: " + str(not eval_result))
+            return
+        else:
+            print('Not ACCAPTIBALE: Searching for a new solution')
             return
 
 
